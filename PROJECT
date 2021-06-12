@@ -1,0 +1,9 @@
+domain: vpn-planet
+layout:
+- go.kubebuilder.io/v3
+plugins:
+  manifests.sdk.operatorframework.io/v2: {}
+  scorecard.sdk.operatorframework.io/v2: {}
+projectName: star-vpn-operator
+repo: github.com/vpn-planet/star-vpn-operator
+version: "3"
