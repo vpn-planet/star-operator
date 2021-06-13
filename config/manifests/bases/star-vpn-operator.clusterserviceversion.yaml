@@ -1,0 +1,51 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  annotations:
+    alm-examples: '[]'
+    capabilities: Basic Install
+  name: star-vpn-operator.v0.0.0
+  namespace: placeholder
+spec:
+  apiservicedefinitions: {}
+  customresourcedefinitions:
+    owned:
+    - description: Network is the Schema for the networks API
+      displayName: Network
+      kind: Network
+      name: networks.star-vpn.vpn-planet
+      version: v1
+  description: Star VPN Operator
+  displayName: star-vpn-operator
+  icon:
+  - base64data: ""
+    mediatype: ""
+  install:
+    spec:
+      deployments: null
+    strategy: ""
+  installModes:
+  - supported: false
+    type: OwnNamespace
+  - supported: false
+    type: SingleNamespace
+  - supported: false
+    type: MultiNamespace
+  - supported: true
+    type: AllNamespaces
+  keywords:
+  - vpn
+  - wireguard
+  - network
+  - server
+  - client
+  links:
+  - name: Star Vpn Operator
+    url: https://star-vpn-operator.domain
+  maintainers:
+  - email: world@luma.email
+    name: luma
+  maturity: alpha
+  provider:
+    name: VPN Planet
+  version: 0.0.0
