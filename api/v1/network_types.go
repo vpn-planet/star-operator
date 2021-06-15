@@ -44,9 +44,9 @@ type NetworkStatus struct {
 }
 
 //+kubebuilder:object:root=true
-//+kubebuilder:subresource:status
 
 // Network is the Schema for the networks API
+//+kubebuilder:subresource:status
 type Network struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
