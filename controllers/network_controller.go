@@ -51,6 +51,11 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// your logic here
 
+	// var
+	// if err:=r.Get(ctx, req.NamespacedName, &); err != nil {
+	// 	return ctrl.Result{}, client.IgnoreNotFound(err)
+	// }
+
 	return ctrl.Result{}, nil
 }
 

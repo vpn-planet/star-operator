@@ -28,14 +28,19 @@ type NetworkSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// Foo is an example field of Network. Edit network_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	// Cidr block used in VPN network.
+	Cidrs []string `json:"cidrs,omitempty"`
+	// Star VPN server IP addresses that is in cidr block.
+	ServerIps   []string `json:"server_ips,omitempty"`
+	Replicas    int      `json:"replicas,omitempty"`
+	ExternalIps []string `json:"external_ips,omitempty"`
 }
 
 // NetworkStatus defines the observed state of Network
 type NetworkStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+	DeviceNumber int `json:"devices_number,omitempty"`
 }
 
 //+kubebuilder:object:root=true
