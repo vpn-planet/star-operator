@@ -21,6 +21,7 @@ limitations under the License.
 package v1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -91,15 +92,27 @@ func (in *NetworkSpec) DeepCopyInto(out *NetworkSpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
-	if in.ServerIps != nil {
-		in, out := &in.ServerIps, &out.ServerIps
+	if in.ServerIPs != nil {
+		in, out := &in.ServerIPs, &out.ServerIPs
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
-	if in.ExternalIps != nil {
-		in, out := &in.ExternalIps, &out.ExternalIps
+	if in.Replicas != nil {
+		in, out := &in.Replicas, &out.Replicas
+		*out = new(int32)
+		**out = **in
+	}
+	if in.ExternalIPs != nil {
+		in, out := &in.ExternalIPs, &out.ExternalIPs
 		*out = make([]string, len(*in))
 		copy(*out, *in)
+	}
+	if in.Env != nil {
+		in, out := &in.Env, &out.Env
+		*out = make([]corev1.EnvVar, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
 	}
 }
 
