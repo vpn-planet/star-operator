@@ -30,7 +30,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	starvpnv1 "github.com/vpn-planet/star-vpn-operator/api/v1"
+	starvpnv1 "github.com/vpn-planet/star-operator/api/v1"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -58,7 +58,8 @@ var _ = BeforeSuite(func() {
 		ErrorIfCRDPathMissing: true,
 	}
 
-	cfg, err := testEnv.Start()
+	var err error
+	cfg, err = testEnv.Start()
 	Expect(err).NotTo(HaveOccurred())
 	Expect(cfg).NotTo(BeNil())
 

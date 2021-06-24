@@ -1,4 +1,4 @@
-module github.com/vpn-planet/star-vpn-operator
+module github.com/vpn-planet/star-operator
 
 go 1.16
 

@@ -4,7 +4,7 @@ metadata:
   annotations:
     alm-examples: '[]'
     capabilities: Basic Install
-  name: star-vpn-operator.v0.0.0
+  name: star-operator.v0.0.0
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -13,10 +13,10 @@ spec:
     - description: Network is the Schema for the networks API
       displayName: Network
       kind: Network
-      name: networks.star-vpn.vpn-planet
+      name: networks.star.vpn-planet
       version: v1
   description: Star VPN Operator
-  displayName: star-vpn-operator
+  displayName: star-operator
   icon:
   - base64data: ""
     mediatype: ""
@@ -41,7 +41,7 @@ spec:
   - client
   links:
   - name: Star Vpn Operator
-    url: https://star-vpn-operator.domain
+    url: https://star-operator.domain
   maintainers:
   - email: world@luma.email
     name: luma

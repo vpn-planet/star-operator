@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"time"
 
@@ -34,24 +35,29 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	starvpnv1 "github.com/vpn-planet/star-vpn-operator/api/v1"
-	"github.com/vpn-planet/star-vpn-operator/internal/wireguard"
+	starvpnv1 "github.com/vpn-planet/star-operator/api/v1"
+	"github.com/vpn-planet/star-operator/internal/wireguard"
 )
 
 const (
 	wg0ConfKey    = "wg0.conf"
 	srvPrivateKey = "server-private-key"
+	wgImgDefault  = "docker.io/vpnplanet/wireguard"
 )
 
 var (
+	hangCommand = []string{
+		"sh",
+		"-c",
+		"while true; do sleep infinity; done",
+	}
 	initialCommand = []string{
 		"sh",
-		"-ce",
+		"-c",
 		strings.Join([]string{
 			"sysctl -w net.ipv4.ip_forward=1",
 			"sysctl -w net.ipv6.conf.all.forwarding=1",
 			"wg-quick up wg0",
-			"while true; do sleep infinity; done",
 		}, "\n"),
 	}
 )
@@ -62,9 +68,11 @@ type NetworkReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-//+kubebuilder:rbac:groups=star-vpn.vpn-planet,resources=networks,verbs=get;list;watch;create;update;patch;delete
-//+kubebuilder:rbac:groups=star-vpn.vpn-planet,resources=networks/status,verbs=get;update;patch
-//+kubebuilder:rbac:groups=star-vpn.vpn-planet,resources=networks/finalizers,verbs=update
+//+kubebuilder:rbac:groups=star.vpn-planet,resources=networks,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=star.vpn-planet,resources=networks/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=star.vpn-planet,resources=networks/finalizers,verbs=update
+//+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -89,16 +97,49 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 
-	sec := &corev1.Secret{}
-	err = r.Get(ctx, types.NamespacedName{Name: secretName(network.Name), Namespace: network.Namespace}, sec)
+	secPriv := &corev1.Secret{}
+	err = r.Get(ctx, types.NamespacedName{Name: secretNamePrivate(network.Name), Namespace: network.Namespace}, secPriv)
 	if err != nil && errors.IsNotFound(err) {
-		sec, err := r.secretForNetwork(network)
+		sec, err := r.secretPrivateForNetwork(network)
 		if err != nil {
-			log.Error(err, "Failed to create new Secret")
+			log.Error(err, "Failed to create new Secret for private key")
 			return ctrl.Result{}, err
 		}
 
-		log.Info("Creating a new Secret", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+		log.Info("Creating a new Secret for private key", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+
+		err = r.Create(ctx, sec)
+		if err != nil {
+			log.Error(err, "Failed to create new Secret for private key", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+			return ctrl.Result{}, err
+		}
+
+		return ctrl.Result{Requeue: true}, nil
+	} else if err != nil {
+		log.Error(err, "Failed to get Secret for private key")
+		return ctrl.Result{}, err
+	}
+	srvPrivate := secPriv.Data[srvPrivateKey]
+	if len(srvPrivate) == 0 {
+		log.Info("Skipped parsing private key because not present", "Secret.Namespace", secPriv.Namespace, "Secret.Name", secPriv.Name)
+	} else if len(srvPrivate) != wireguard.PrivateKeySize {
+		err = fmt.Errorf("invalid length %d of private key in Secret for private key while expecting length %d", len(srvPrivate), wireguard.PrivateKeySize)
+		log.Error(err, "Secret.Namespace", secPriv.Namespace, "Secret.Name", secPriv.Name)
+		return ctrl.Result{}, err
+	}
+	var pk wireguard.PrivateKey
+	copy(pk[:], srvPrivate[:wireguard.PrivateKeySize])
+
+	secConf := &corev1.Secret{}
+	err = r.Get(ctx, types.NamespacedName{Name: secretNameWireguard(network.Name), Namespace: network.Namespace}, secConf)
+	if err != nil && errors.IsNotFound(err) {
+		sec, err := r.secretConfForNetwork(network, pk)
+		if err != nil {
+			log.Error(err, "Failed to create new Secret for WireGuard config")
+			return ctrl.Result{}, err
+		}
+
+		log.Info("Creating a new Secret for WireGuard config", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
 
 		err = r.Create(ctx, sec)
 		if err != nil {
@@ -106,25 +147,28 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			return ctrl.Result{}, err
 		}
 
-		// Secret created successfully - return and requeue
 		return ctrl.Result{Requeue: true}, nil
 	} else if err != nil {
 		log.Error(err, "Failed to get Deployment")
 		return ctrl.Result{}, err
 	}
 
-	srvPrivate := sec.Data[srvPrivateKey]
-	wg0Conf := sec.Data[wg0ConfKey]
-	wg0ConfDesired, err := serverConf(string(srvPrivate), *network)
-	if err != nil {
-		log.Error(err, "Failed to construct a server config file content")
-		return ctrl.Result{}, err
-	}
+	wg0Conf := secConf.Data[wg0ConfKey]
 
-	if !bytes.Equal(wg0Conf, []byte(wg0ConfDesired)) {
-		sec.Data[wg0ConfKey] = wg0Conf
-		r.Update(ctx, sec)
-		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
+	if len(srvPrivate) == 0 {
+		log.Info("Skipped checking updates for server WireGuard config because server private key is not present")
+	} else {
+		wg0ConfDesired, err := serverConf(pk, *network)
+		if err != nil {
+			log.Error(err, "Failed to construct a server config file content")
+			return ctrl.Result{}, err
+		}
+		if !bytes.Equal(wg0Conf, []byte(wg0ConfDesired)) {
+			log.Info("Updating Secret for WireGuard config", "Secret.Namespace", secConf.Namespace, "Secret.Name", secConf.Name)
+			secConf.Data[wg0ConfKey] = []byte(wg0ConfDesired)
+			r.Update(ctx, secConf)
+			return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
+		}
 	}
 
 	dep := &appsv1.Deployment{}
@@ -156,12 +200,13 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{RequeueAfter: time.Minute}, nil
 	}
 
+	// TODO
 	devices := getDevices()
 	if devices != network.Status.Devices {
 		network.Status.Devices = devices
 		err := r.Status().Update(ctx, network)
 		if err != nil {
-			log.Error(err, "Failed to update Memcached status")
+			log.Error(err, "Failed to update Network status")
 			return ctrl.Result{}, err
 		}
 	}
@@ -169,26 +214,45 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	return ctrl.Result{}, nil
 }
 
-func (r *NetworkReconciler) secretForNetwork(m *starvpnv1.Network) (*corev1.Secret, error) {
+func (r *NetworkReconciler) secretPrivateForNetwork(m *starvpnv1.Network) (*corev1.Secret, error) {
 	p, err := wireguard.NewPrivateKey()
 	if err != nil {
 		return nil, err
 	}
 
-	srvPriv := p.ToHex()
-	srvConf, err := serverConf(srvPriv, *m)
+	ls := labelsForNetwork(m.Name)
+
+	sec := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretNamePrivate(m.Name),
+			Namespace: m.Namespace,
+			Labels:    ls,
+		},
+		Data: map[string][]byte{
+			srvPrivateKey: p[:],
+		},
+	}
+
+	ctrl.SetControllerReference(m, sec, r.Scheme)
+	return sec, nil
+}
+
+func (r *NetworkReconciler) secretConfForNetwork(m *starvpnv1.Network, priv wireguard.PrivateKey) (*corev1.Secret, error) {
+	srvConf, err := serverConf(priv, *m)
 	if err != nil {
 		return nil, err
 	}
 
+	ls := labelsForNetwork(m.Name)
+
 	sec := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName(m.Name),
+			Name:      secretNameWireguard(m.Name),
 			Namespace: m.Namespace,
+			Labels:    ls,
 		},
-		Data: map[string][]byte{
-			srvPrivateKey: []byte(srvPriv),
-			wg0ConfKey:    []byte(srvConf),
+		StringData: map[string]string{
+			wg0ConfKey: srvConf,
 		},
 	}
 
@@ -200,6 +264,13 @@ func (r *NetworkReconciler) deploymentForNetwork(m *starvpnv1.Network) *appsv1.D
 	ls := labelsForNetwork(m.Name)
 	replicas := *m.Spec.Replicas
 	privileged := true
+
+	wgImg := m.Spec.WireguardImage
+	if wgImg == "" {
+		wgImg = wgImgDefault
+	}
+
+	var mode int32 = 0400
 
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -217,26 +288,38 @@ func (r *NetworkReconciler) deploymentForNetwork(m *starvpnv1.Network) *appsv1.D
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
-						Image: m.Spec.WireguardImage,
-						Name:  "star-vpn-server",
+						Image: wgImg,
+						Name:  "star-server",
 						SecurityContext: &corev1.SecurityContext{
 							Privileged: &privileged,
 						},
-						Env:     m.Spec.Env,
-						Command: initialCommand,
+						ImagePullPolicy: m.Spec.ImagePullPolicy,
+						Env:             m.Spec.Env,
+						Command:         hangCommand,
 						Ports: []corev1.ContainerPort{{
 							ContainerPort: 51820,
 							Name:          "wireguard",
 						}},
+						Lifecycle: &corev1.Lifecycle{
+							PostStart: &corev1.Handler{
+								Exec: &corev1.ExecAction{
+									Command: initialCommand,
+								},
+							},
+						},
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "wireguard",
+							MountPath: "/etc/wireguard",
+							ReadOnly:  true,
+						}},
 					}},
+					ImagePullSecrets: m.Spec.ImagePullSecrets,
 					Volumes: []corev1.Volume{{
-						Name: secretName(m.Name),
+						Name: "wireguard",
 						VolumeSource: corev1.VolumeSource{
 							Secret: &corev1.SecretVolumeSource{
-								Items: []corev1.KeyToPath{{
-									Key:  wg0ConfKey,
-									Path: "/etc/wireguard/wg0.conf",
-								}},
+								SecretName:  secretNameWireguard(m.Name),
+								DefaultMode: &mode,
 							},
 						},
 					}},
@@ -249,26 +332,25 @@ func (r *NetworkReconciler) deploymentForNetwork(m *starvpnv1.Network) *appsv1.D
 	return dep
 }
 
-func secretName(n string) string {
-	return n + "-server-config"
+func secretNameWireguard(n string) string {
+	return n + "-server-wireguard"
+}
+
+func secretNamePrivate(n string) string {
+	return n + "-server-private"
 }
 
 func deploymentName(n string) string {
 	return n + "-server"
 }
 
-func serverConf(priv string, network starvpnv1.Network) (string, error) {
-	var pk wireguard.PrivateKey
-	if priv == "" {
-		pk, _ = wireguard.NewPrivateKey()
-	} else {
-		err := pk.FromHex(priv)
-		if err != nil {
-			return "", err
-		}
-	}
+func serviceName(n string) string {
+	return n + "-server"
+}
 
+func serverConf(pk wireguard.PrivateKey, network starvpnv1.Network) (string, error) {
 	var address wireguard.IPAddresses
+	// TODO
 
 	return wireguard.BuildSrvConf(wireguard.ServerConf{
 		IPv4Enabled:      network.Spec.IPv4Enabled,
@@ -280,7 +362,10 @@ func serverConf(priv string, network starvpnv1.Network) (string, error) {
 }
 
 func labelsForNetwork(name string) map[string]string {
-	return map[string]string{"star-vpn.vpn-planet/app": "network", "star-vpn.vpn-planet/name": name}
+	return map[string]string{
+		"app":  "network.star.vpn-planet",
+		"name": name,
+	}
 }
 
 func getDevices() int32 {

@@ -4,9 +4,9 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.4.1
   creationTimestamp: null
-  name: networks.star-vpn.vpn-planet
+  name: networks.star.vpn-planet
 spec:
-  group: star-vpn.vpn-planet
+  group: star.vpn-planet
   names:
     kind: Network
     listKind: NetworkList

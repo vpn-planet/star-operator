@@ -7,7 +7,31 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - star-vpn.vpn-planet
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - star.vpn-planet
   resources:
   - networks
   verbs:
@@ -19,13 +43,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - star-vpn.vpn-planet
+  - star.vpn-planet
   resources:
   - networks/finalizers
   verbs:
   - update
 - apiGroups:
-  - star-vpn.vpn-planet
+  - star.vpn-planet
   resources:
   - networks/status
   verbs:

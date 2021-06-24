@@ -9,6 +9,7 @@ const (
 	srvConfTmpl = `[Interface]
 PrivateKey = {{.ServerPrivateKey}}
 Address = {{.ServerAddress}}
+ListenPort = {{.ListenPort}}
 PostUp = {{.PostUp}}
 PostDown = {{.PostDown}}{{range .Devices}}
 
@@ -33,7 +34,7 @@ Endpoint = {{.ServerEndpoint}}`
 		<string>{{.PayloadDisplayName}}</string>
 
 		<key>PayloadIdentifier</key>
-		<string>com.vpn-planet.star-vpn.wireguard.{{.PayloadIdentifierUUID}}</string>
+		<string>com.vpn-planet.star.wireguard.{{.PayloadIdentifierUUID}}</string>
 
 		<key>PayloadOrganization</key>
 		<string>{{.PayloadOrganization}}</string>
@@ -103,6 +104,7 @@ Endpoint = {{.ServerEndpoint}}`
 type srvConfRecipient struct {
 	ServerPrivateKey string
 	ServerAddress    string
+	ListenPort       uint16
 	PostUp           string
 	PostDown         string
 	Devices          []srvConfDevice

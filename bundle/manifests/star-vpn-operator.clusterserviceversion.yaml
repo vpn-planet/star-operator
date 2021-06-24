@@ -5,7 +5,7 @@ metadata:
     alm-examples: |-
       [
         {
-          "apiVersion": "star-vpn.vpn-planet/v1",
+          "apiVersion": "star.vpn-planet/v1",
           "kind": "Network",
           "metadata": {
             "name": "network-sample"
@@ -18,7 +18,7 @@ metadata:
     capabilities: Basic Install
     operators.operatorframework.io/builder: operator-sdk-v1.7.1+git
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v3
-  name: star-vpn-operator.v0.0.1
+  name: star-operator.v0.0.1
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -27,10 +27,10 @@ spec:
     - description: Network is the Schema for the networks API
       displayName: Network
       kind: Network
-      name: networks.star-vpn.vpn-planet
+      name: networks.star.vpn-planet
       version: v1
   description: Star VPN Operator
-  displayName: star-vpn-operator
+  displayName: star-operator
   icon:
   - base64data: ""
     mediatype: ""
@@ -39,7 +39,7 @@ spec:
       clusterPermissions:
       - rules:
         - apiGroups:
-          - star-vpn.vpn-planet
+          - star.vpn-planet
           resources:
           - networks
           verbs:
@@ -51,13 +51,13 @@ spec:
           - update
           - watch
         - apiGroups:
-          - star-vpn.vpn-planet
+          - star.vpn-planet
           resources:
           - networks/finalizers
           verbs:
           - update
         - apiGroups:
-          - star-vpn.vpn-planet
+          - star.vpn-planet
           resources:
           - networks/status
           verbs:
@@ -76,9 +76,9 @@ spec:
           - subjectaccessreviews
           verbs:
           - create
-        serviceAccountName: star-vpn-operator-controller-manager
+        serviceAccountName: star-operator-controller-manager
       deployments:
-      - name: star-vpn-operator-controller-manager
+      - name: star-operator-controller-manager
         spec:
           replicas: 1
           selector:
@@ -133,7 +133,7 @@ spec:
                   allowPrivilegeEscalation: false
               securityContext:
                 runAsNonRoot: true
-              serviceAccountName: star-vpn-operator-controller-manager
+              serviceAccountName: star-operator-controller-manager
               terminationGracePeriodSeconds: 10
       permissions:
       - rules:
@@ -168,7 +168,7 @@ spec:
           verbs:
           - create
           - patch
-        serviceAccountName: star-vpn-operator-controller-manager
+        serviceAccountName: star-operator-controller-manager
     strategy: deployment
   installModes:
   - supported: false
@@ -187,7 +187,7 @@ spec:
   - client
   links:
   - name: Star Vpn Operator
-    url: https://star-vpn-operator.domain
+    url: https://star-operator.domain
   maintainers:
   - email: world@luma.email
     name: luma

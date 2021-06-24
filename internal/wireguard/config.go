@@ -1,6 +1,7 @@
 package wireguard
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -19,10 +20,12 @@ const (
 	ipv6PostDown = "ip6tables -D FORWARD -i %i -j ACCEPT; " +
 		"ip6tables -D FORWARD -o %i -j ACCEPT; " +
 		"ip6tables -t nat -D POSTROUTING -o eth0 -j MASQUERADE"
+	portMin = 1
+	portMax = 65535
 )
 
 var (
-	osVPNSubTypeMap = map[string]string{
+	osToVPNSubType = map[string]string{
 		"ios":   "com.wireguard.ios",
 		"macos": "com.wireguard.macos",
 	}
@@ -31,6 +34,7 @@ var (
 type ServerConf struct {
 	IPv4Enabled      bool
 	IPv6Enabled      bool
+	ListenPort       uint16
 	ServerPrivateKey PrivateKey
 	ServerAddress    IPAddresses
 	Devices          []ServerConfDevice
@@ -44,8 +48,8 @@ type ServerConfDevice struct {
 
 func (d ServerConfDevice) toRecipient() srvConfDevice {
 	return srvConfDevice{
-		DevicePublicKey:  d.DevicePublicKey.ToHex(),
-		PeerPresharedKey: d.PeerPresharedKey.ToHex(),
+		DevicePublicKey:  base64.StdEncoding.EncodeToString(d.DevicePublicKey[:]),
+		PeerPresharedKey: base64.StdEncoding.EncodeToString(d.PeerPresharedKey[:]),
 		AllowedIPs:       d.AllowedIPs.String(),
 	}
 }
@@ -65,7 +69,7 @@ type DevMobileconfig struct {
 	DevConf             DevConf
 	WgQuickConfig       string
 	RemoteAddress       string
-	// "ios", "macos"
+	// One of "ios", "macos"
 	OS                                  string
 	PayloadIdentifierUUID               string
 	PayloadUUID                         string
@@ -96,10 +100,14 @@ func BuildSrvConf(c ServerConf) (string, error) {
 	for _, d := range c.Devices {
 		devs = append(devs, d.toRecipient())
 	}
+	if c.ListenPort < portMin || c.ListenPort > portMax {
+		return "", fmt.Errorf("port number %d is out of port range", c.ListenPort)
+	}
 
 	return buildSrvConf(srvConfRecipient{
-		ServerPrivateKey: c.ServerPrivateKey.ToHex(),
+		ServerPrivateKey: base64.StdEncoding.EncodeToString(c.ServerPrivateKey[:]),
 		ServerAddress:    c.ServerAddress.String(),
+		ListenPort:       c.ListenPort,
 		PostUp:           strings.Join(ups, "; "),
 		PostDown:         strings.Join(downs, "; "),
 		Devices:          devs,
@@ -108,17 +116,17 @@ func BuildSrvConf(c ServerConf) (string, error) {
 
 func BuildDevConf(c DevConf) (string, error) {
 	return buildDevConf(devConfRecipient{
-		DevicePrivateKey: c.DevicePrivateKey.ToHex(),
+		DevicePrivateKey: base64.StdEncoding.EncodeToString(c.DevicePrivateKey[:]),
 		DeviceAddress:    c.DeviceAddress.String(),
-		ServerPublicKey:  c.ServerPublicKey.ToHex(),
-		PeerPresharedKey: c.PeerPresharedKey.ToHex(),
+		ServerPublicKey:  base64.StdEncoding.EncodeToString(c.ServerPublicKey[:]),
+		PeerPresharedKey: base64.StdEncoding.EncodeToString(c.PeerPresharedKey[:]),
 		AllowedIPs:       c.AllowedIPs.String(),
 		ServerEndpoint:   c.ServerEndpoint.String(),
 	}), nil
 }
 
 func BuildDevMobileconfig(c DevMobileconfig) (string, error) {
-	vpnSubType, ok := osVPNSubTypeMap[c.OS]
+	vpnSubType, ok := osToVPNSubType[c.OS]
 	if !ok {
 		return "", fmt.Errorf("%v is not supported OS type", c.OS)
 	}

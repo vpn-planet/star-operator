@@ -14,4 +14,4 @@ data:
       resourceName: 0c3cca50.vpn-planet
 kind: ConfigMap
 metadata:
-  name: star-vpn-operator-manager-config
+  name: star-operator-manager-config

@@ -31,8 +31,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	starvpnv1 "github.com/vpn-planet/star-vpn-operator/api/v1"
-	"github.com/vpn-planet/star-vpn-operator/controllers"
+	starvpnv1 "github.com/vpn-planet/star-operator/api/v1"
+	"github.com/vpn-planet/star-operator/controllers"
 	//+kubebuilder:scaffold:imports
 )
 

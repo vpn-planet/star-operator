@@ -1,4 +1,4 @@
-apiVersion: star-vpn.vpn-planet/v1
+apiVersion: star.vpn-planet/v1
 kind: Network
 metadata:
   name: network-sample

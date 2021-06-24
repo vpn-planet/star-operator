@@ -6,9 +6,9 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.4.1
   creationTimestamp: null
-  name: networks.star-vpn.vpn-planet
+  name: networks.star.vpn-planet
 spec:
-  group: star-vpn.vpn-planet
+  group: star.vpn-planet
   names:
     kind: Network
     listKind: NetworkList
@@ -154,6 +154,22 @@ spec:
                   system.
                 items:
                   type: string
+                type: array
+              imagePullPolicy:
+                description: 'Image pull policy. One of Always, Never, IfNotPresent.
+                  Defaults to Always if :latest tag is specified, or IfNotPresent
+                  otherwise. Cannot be updated. More info: https://kubernetes.io/docs/concepts/containers/images#updating-images'
+                type: string
+              imagePullSecrets:
+                items:
+                  description: LocalObjectReference contains enough information to
+                    let you locate the referenced object inside the same namespace.
+                  properties:
+                    name:
+                      description: 'Name of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        TODO: Add other useful fields. apiVersion, kind, uid?'
+                      type: string
+                  type: object
                 type: array
               ipv4Enabled:
                 type: boolean

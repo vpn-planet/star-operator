@@ -61,6 +61,16 @@ type NetworkSpec struct {
 	IPv4Enabled   bool   `json:"ipv4Enabled,omitempty"`
 	IPv6Enabled   bool   `json:"ipv6Enabled,omitempty"`
 	ServerAddress string `json:"serverAddress,omitempty"`
+
+	// Image pull policy.
+	// One of Always, Never, IfNotPresent.
+	// Defaults to Always if :latest tag is specified, or IfNotPresent otherwise.
+	// Cannot be updated.
+	// More info: https://kubernetes.io/docs/concepts/containers/images#updating-images
+	// +optional
+	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
+
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 }
 
 // NetworkStatus defines the observed state of Network

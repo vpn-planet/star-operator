@@ -11,6 +11,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"fmt"
 
 	"golang.org/x/crypto/curve25519"
 )
@@ -46,11 +47,21 @@ func (sk *PrivateKey) PublicKey() (pk PublicKey) {
 	return
 }
 
-func (sk *PrivateKey) SharedSecret(pk PublicKey) (ss [PublicKeySize]byte) {
-	apk := (*[PublicKeySize]byte)(&pk)
-	ask := (*[PrivateKeySize]byte)(sk)
-	curve25519.ScalarMult(&ss, ask, apk)
-	return ss
+func (sk PrivateKey) SharedSecret(pk PublicKey) (ss [PublicKeySize]byte, err error) {
+	apk := pk[:]
+	ask := sk[:]
+	var sss []byte
+	sss, err = curve25519.X25519(ask, apk)
+	if err != nil {
+		return
+	}
+
+	if len(sss) != PublicKeySize {
+		panic(fmt.Sprintf("Length of shared secret calculated is %d but only accepts ", PublicKeySize))
+	}
+
+	copy(ss[:], sss[:PublicKeySize])
+	return
 }
 
 func loadExactHex(dst []byte, src string) error {
@@ -80,10 +91,6 @@ func (key *PrivateKey) FromHex(src string) (err error) {
 	return
 }
 
-func (key *PrivateKey) ToHex() string {
-	return hex.EncodeToString(key[:])
-}
-
 func (key *PrivateKey) FromMaybeZeroHex(src string) (err error) {
 	err = loadExactHex(key[:], src)
 	if key.IsZero() {
@@ -97,10 +104,6 @@ func (key *PublicKey) FromHex(src string) error {
 	return loadExactHex(key[:], src)
 }
 
-func (key PublicKey) ToHex() string {
-	return hex.EncodeToString(key[:])
-}
-
 func (key PublicKey) IsZero() bool {
 	var zero PublicKey
 	return key.Equals(zero)
@@ -112,8 +115,4 @@ func (key PublicKey) Equals(tar PublicKey) bool {
 
 func (key *PresharedKey) FromHex(src string) error {
 	return loadExactHex(key[:], src)
-}
-
-func (key PresharedKey) ToHex() string {
-	return hex.EncodeToString(key[:])
 }
