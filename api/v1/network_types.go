@@ -39,13 +39,6 @@ type NetworkSpec struct {
 	// +optional
 	Replicas *int32 `json:"replicas,omitempty"`
 
-	// externalIPs is a list of IP addresses for which nodes in the cluster
-	// will also accept traffic for this service.  These IPs are not managed by
-	// Kubernetes.  The user is responsible for ensuring that traffic arrives
-	// at a node with this IP.  A common example is external load-balancers
-	// that are not part of the Kubernetes system.
-	ExternalIPs []string `json:"externalIPs,omitempty"`
-
 	// WireGuard installed image source for server container
 	// If omitted, docker.io/vpnplanet/wireguard:latest will be used
 	// +optional
@@ -91,6 +84,9 @@ type Network struct {
 
 	Spec   NetworkSpec   `json:"spec,omitempty"`
 	Status NetworkStatus `json:"status,omitempty"`
+
+	SecretPrivate LocalSecretReference `json:"secret_private,omitempty"`
+	SecretConfig  LocalSecretReference `json:"secret_config,omitempty"`
 }
 
 //+kubebuilder:object:root=true

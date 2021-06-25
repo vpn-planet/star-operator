@@ -225,55 +225,38 @@ func TestIPAddressesString(t *testing.T) {
 	}
 }
 
-func TestParseIPRange(t *testing.T) {
+func TestParseIPPrefix(t *testing.T) {
 	type Case struct {
 		in    string
-		out   ipRange
+		ip    net.IP
+		pre   uint8
 		isErr bool
 		err   string
 	}
 	cases := []Case{
 		// IPv4 cases
 		{
-			in: "10.10.10.0/24",
-			out: ipRange{
-				ip:  net.IP{10, 10, 10, 0},
-				pre: 24,
-			},
+			in:  "10.10.10.0/24",
+			ip:  net.IP{10, 10, 10, 0},
+			pre: 24,
 		},
 		{
-			in: "10.10.10.0/27",
-			out: ipRange{
-				ip:  net.IP{10, 10, 10, 0},
-				pre: 27,
-			},
+			in:  "10.10.10.0/27",
+			ip:  net.IP{10, 10, 10, 0},
+			pre: 27,
 		},
 		{
-			in: "10.0.0.0/32",
-			out: ipRange{
-				ip:  net.IP{10, 0, 0, 0},
-				pre: 32,
-			},
+			in:  "10.0.0.0/32",
+			ip:  net.IP{10, 0, 0, 0},
+			pre: 32,
 		},
 		{
-			in: "10.0.0.0",
-			out: ipRange{
-				ip:  net.IP{10, 0, 0, 0},
-				pre: 32,
-			},
+			in:  "10.0.0.0",
+			ip:  net.IP{10, 0, 0, 0},
+			pre: 32,
 		},
 
 		// IPv4 error cases
-		{
-			in:    "10.0.0.0/0",
-			isErr: true,
-			err:   "at 4",
-		},
-		{
-			in:    "10.10.10.0/16",
-			isErr: true,
-			err:   "at 20",
-		},
 		{
 			in:    "10.10.10.0/33",
 			isErr: true,
@@ -282,45 +265,27 @@ func TestParseIPRange(t *testing.T) {
 
 		// IPv6 cases
 		{
-			in: "fd00::/64",
-			out: ipRange{
-				ip:  net.IP{0xfd, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-				pre: 64,
-			},
+			in:  "fd00::/64",
+			ip:  net.IP{0xfd, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+			pre: 64,
 		},
 		{
-			in: "fc00:1000::/65",
-			out: ipRange{
-				ip:  net.IP{0xfc, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-				pre: 65,
-			},
+			in:  "fc00:1000::/65",
+			ip:  net.IP{0xfc, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+			pre: 65,
 		},
 		{
-			in: "fc00:1000:1000::1000:1000/128",
-			out: ipRange{
-				ip:  net.IP{0xfc, 0x00, 0x10, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x10, 0x00},
-				pre: 128,
-			},
+			in:  "fc00:1000:1000::1000:1000/128",
+			ip:  net.IP{0xfc, 0x00, 0x10, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x10, 0x00},
+			pre: 128,
 		},
 		{
-			in: "2001:db8:1000::1000:1000",
-			out: ipRange{
-				ip:  net.IP{0x20, 0x01, 0x0d, 0xb8, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x10, 0x00},
-				pre: 128,
-			},
+			in:  "2001:db8:1000::1000:1000",
+			ip:  net.IP{0x20, 0x01, 0x0d, 0xb8, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x10, 0x00},
+			pre: 128,
 		},
 
 		// IPv4 error cases
-		{
-			in:    "fd00::/0",
-			isErr: true,
-			err:   "at 0",
-		},
-		{
-			in:    "fd00::1000:0:0/64",
-			isErr: true,
-			err:   "at 83",
-		},
 		{
 			in:    "2001:db8::/129",
 			isErr: true,
@@ -361,29 +326,31 @@ func TestParseIPRange(t *testing.T) {
 	}
 
 	for i, c := range cases {
-		out, err := ParseIPRange(c.in)
+		ip, pre, err := parseIPPrefix(c.in)
 		if !c.isErr {
 			if err != nil {
 				t.Errorf(
-					"#%d: error of ParseIPRange(%q) is %q, but expected to be nil",
+					"#%d: error of parseIPPrefix(%q) is %q, but expected to be nil",
 					i,
 					c.in,
 					err,
 				)
 			}
-			if !reflect.DeepEqual(out, c.out) {
+			if !reflect.DeepEqual(ip, c.ip) || pre != c.pre {
 				t.Errorf(
-					"#%d: output of ParseIPRange(%q) is %#v, but expected to be %#v",
+					"#%d: output of parseIPPrefix(%q) is %s/%d, but expected to be %s/%d",
 					i,
 					c.in,
-					out,
-					c.out,
+					ip,
+					pre,
+					c.ip,
+					c.pre,
 				)
 			}
 		} else {
 			if err == nil {
 				t.Errorf(
-					"#%d: error of ParseIPRange(%q) is nil, but expected not to be nil",
+					"#%d: error of parseIPPrefix(%q) is nil, but expected not to be nil",
 					i,
 					c.in,
 				)
@@ -396,7 +363,7 @@ func TestParseIPRange(t *testing.T) {
 
 			if !strings.Contains(es, c.err) {
 				t.Errorf(
-					"#%d: error of ParseIPRange(%q) is %q, but expected to contain %q",
+					"#%d: error of parseIPPrefix(%q) is %q, but expected to contain %q",
 					i,
 					c.in,
 					es,

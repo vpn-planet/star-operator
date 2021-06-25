@@ -8,6 +8,35 @@ import (
 	"strings"
 )
 
+func parseIPPrefix(s string) (net.IP, uint8, error) {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '/' {
+			ip := ParseIP(s[:i])
+			if ip == nil {
+				return net.IP{}, 0, fmt.Errorf("failed to parse IP part: %q", s[:i])
+			}
+
+			pre, err := strconv.Atoi(s[i+1:])
+			if err != nil {
+				return net.IP{}, 0, err
+			}
+
+			if pre > len(ip)*8 {
+				return net.IP{}, 0, fmt.Errorf("IP mask prefix length out of range: %d", pre)
+			}
+
+			return ip, uint8(pre), nil
+		}
+	}
+
+	ip := ParseIP(s)
+	if ip == nil {
+		return net.IP{}, 0, fmt.Errorf("failed to parse IP: %q", s)
+	}
+
+	return ip, uint8(len(ip) * 8), nil
+}
+
 // Specific private IP address bound to single interface.
 type ipAddress struct {
 	ip  net.IP
@@ -26,6 +55,20 @@ func NewIPAddress(ip net.IP, pre uint8) (ipAddress, error) {
 
 func (r ipAddress) String() string {
 	return fmt.Sprintf("%s/%d", r.ip, r.pre)
+}
+
+func ParseIPAddress(s string) (ipAddress, error) {
+	ip, pre, err := parseIPPrefix(s)
+	if err != nil {
+		return ipAddress{}, err
+	}
+
+	a, err := NewIPAddress(ip, pre)
+	if err != nil {
+		return ipAddress{}, err
+	}
+
+	return a, nil
 }
 
 type IPAddresses []ipAddress
@@ -72,42 +115,12 @@ func ParseIP(s string) net.IP {
 }
 
 func ParseIPRange(s string) (ipRange, error) {
-	for i := 0; i < len(s); i++ {
-		if s[i] == '/' {
-			ip := ParseIP(s[:i])
-			if ip == nil {
-				return ipRange{}, fmt.Errorf("failed to parse IP part: %q", s[:i])
-			}
-
-			pre, err := strconv.Atoi(s[i+1:])
-			if err != nil {
-				return ipRange{}, err
-			}
-
-			if pre > len(ip)*8 {
-				return ipRange{}, fmt.Errorf("IP mask prefix length out of range: %d", pre)
-			}
-
-			r, err := NewIPRange(
-				ip,
-				uint8(pre),
-			)
-			if err != nil {
-				return ipRange{}, err
-			}
-			return r, nil
-		}
+	ip, pre, err := parseIPPrefix(s)
+	if err != nil {
+		return ipRange{}, err
 	}
 
-	ip := ParseIP(s)
-	if ip == nil {
-		return ipRange{}, fmt.Errorf("failed to parse IP: %q", s)
-	}
-
-	r, err := NewIPRange(
-		ip,
-		uint8(len(ip)*8),
-	)
+	r, err := NewIPRange(ip, pre)
 	if err != nil {
 		return ipRange{}, err
 	}
