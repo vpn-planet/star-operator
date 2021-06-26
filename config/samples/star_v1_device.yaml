@@ -1,0 +1,7 @@
+apiVersion: star.vpn-planet/v1
+kind: Device
+metadata:
+  name: device-sample
+spec:
+  # Add fields here
+  foo: bar

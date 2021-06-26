@@ -16,4 +16,13 @@ resources:
   kind: Network
   path: github.com/vpn-planet/star-operator/api/v1
   version: v1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: vpn-planet
+  group: star
+  kind: Device
+  path: github.com/vpn-planet/star-operator/api/v1
+  version: v1
 version: "3"
