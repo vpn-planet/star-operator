@@ -26,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 
 	"context"
@@ -35,7 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	starvpnv1 "github.com/vpn-planet/star-operator/api/v1"
+	starv1 "github.com/vpn-planet/star-operator/api/v1"
 	"github.com/vpn-planet/star-operator/internal/wireguard"
 
 	"k8s.io/apiserver/pkg/storage/names"
@@ -53,13 +54,10 @@ var (
 		"sh",
 		"-c",
 		strings.Join([]string{
-			"sysctl -w net.ipv4.ip_forward=1",
-			"sysctl -w net.ipv6.conf.all.forwarding=1",
-			"wg-quick up wg0",
 			"while true; do sleep infinity; done",
 		}, "\n"),
 	}
-	initialCommand = []string{
+	upCommand = []string{
 		"sh",
 		"-c",
 		strings.Join([]string{
@@ -68,7 +66,13 @@ var (
 			"wg-quick up wg0",
 		}, "\n"),
 	}
-	_ = initialCommand
+	downCommand = []string{
+		"sh",
+		"-c",
+		strings.Join([]string{
+			"wg-quick down wg0",
+		}, "\n"),
+	}
 )
 
 // NetworkReconciler reconciles a Network object
@@ -96,7 +100,7 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	log := log.FromContext(ctx)
 
 	// Reconcile Network
-	network := &starvpnv1.Network{}
+	network := &starv1.Network{}
 	err := r.Get(ctx, req.NamespacedName, network)
 	if err != nil {
 		if errors.IsNotFound(err) {
@@ -106,40 +110,49 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		log.Error(err, "Failed to get Network")
 		return ctrl.Result{}, err
 	}
+	log.Info("Found", "Network.Namespace", network.Namespace, "Network.Name", network.Name)
 
 	// Reconcile Network Secret reference for private key
-	if network.SecretPrivate == (starvpnv1.LocalSecretReference{}) {
-		patch := client.MergeFrom(network)
-		network.SecretPrivate = starvpnv1.LocalSecretReference{
-			Name: genSecretNamePrivate(network.Name),
+	if network.SecretPrivate == (starv1.LocalSecretReference{}) {
+		log.Info("Network SecretPrivate not set. Generating and setting", "Network.Namespace", network.Namespace, "Network.Name", network.Name)
+		patch := &unstructured.Unstructured{}
+		patch.SetGroupVersionKind(network.GroupVersionKind())
+		patch.SetNamespace(network.Namespace)
+		patch.SetName(network.Name)
+		patch.UnstructuredContent()["secret_private"] = map[string]interface{}{
+			"name": genSecretNamePrivate(network.Name),
 		}
-		err := r.Patch(ctx, network, patch)
+		err := r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
+			FieldManager: "secret_private",
+		})
+
 		if err != nil {
 			log.Error(err, "Failed to patch Secret reference for private key")
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, nil
+		return ctrl.Result{Requeue: true}, nil
 	}
-	// if network.SecretPrivate.Namespace == "" {
-	// 	network.SecretPrivate.Namespace = network.Namespace
-	// }
 
 	// Reconcile Network Secret reference for WireGuard Quick Config
-	if network.SecretConfig == (starvpnv1.LocalSecretReference{}) {
-		patch := client.MergeFrom(network)
-		network.SecretConfig = starvpnv1.LocalSecretReference{
-			Name: genSecretNameConfig(network.Name),
+	if network.SecretConfig == (starv1.LocalSecretReference{}) {
+		log.Info("Network SecretConfig not set. Generating and setting", "Network.Namespace", network.Namespace, "Network.Name", network.Name)
+		patch := &unstructured.Unstructured{}
+		patch.SetGroupVersionKind(network.GroupVersionKind())
+		patch.SetNamespace(network.Namespace)
+		patch.SetName(network.Name)
+		patch.UnstructuredContent()["secret_config"] = map[string]interface{}{
+			"name": genSecretNameConfig(network.Name),
 		}
-		err := r.Patch(ctx, network, patch)
+		err := r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
+			FieldManager: "secret_config",
+		})
+
 		if err != nil {
 			log.Error(err, "Failed to patch Secret reference for WireGuard Quick Config")
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, nil
+		return ctrl.Result{Requeue: true}, nil
 	}
-	// if network.SecretConfig.Namespace == "" {
-	// 	network.SecretConfig.Namespace = network.Namespace
-	// }
 
 	// Reconcile Secret for private key
 	secPriv := &corev1.Secret{}
@@ -150,9 +163,7 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			log.Error(err, "Failed to create new Secret for private key")
 			return ctrl.Result{}, err
 		}
-
 		log.Info("Creating a new Secret for private key", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
-
 		err = r.Create(ctx, sec)
 		if err != nil {
 			log.Error(err, "Failed to create new Secret for private key", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
@@ -184,15 +195,12 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			log.Error(err, "Failed to create new Secret for WireGuard Quick Config")
 			return ctrl.Result{}, err
 		}
-
 		log.Info("Creating a new Secret for WireGuard Quick Config", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
-
 		err = r.Create(ctx, sec)
 		if err != nil {
 			log.Error(err, "Failed to create new Secret", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
 			return ctrl.Result{}, err
 		}
-
 		return ctrl.Result{Requeue: true}, nil
 	} else if err != nil {
 		log.Error(err, "Failed to get Deployment")
@@ -258,7 +266,7 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	return ctrl.Result{}, nil
 }
 
-func (r *NetworkReconciler) secretPrivateForNetwork(m *starvpnv1.Network) (*corev1.Secret, error) {
+func (r *NetworkReconciler) secretPrivateForNetwork(m *starv1.Network) (*corev1.Secret, error) {
 	p, err := wireguard.NewPrivateKey()
 	if err != nil {
 		return nil, err
@@ -281,7 +289,7 @@ func (r *NetworkReconciler) secretPrivateForNetwork(m *starvpnv1.Network) (*core
 	return sec, nil
 }
 
-func (r *NetworkReconciler) secretConfForNetwork(m *starvpnv1.Network, priv wireguard.PrivateKey) (*corev1.Secret, error) {
+func (r *NetworkReconciler) secretConfForNetwork(m *starv1.Network, priv wireguard.PrivateKey) (*corev1.Secret, error) {
 	srvConf, err := serverConf(priv, *m)
 	if err != nil {
 		return nil, err
@@ -304,7 +312,7 @@ func (r *NetworkReconciler) secretConfForNetwork(m *starvpnv1.Network, priv wire
 	return sec, nil
 }
 
-func (r *NetworkReconciler) deploymentForNetwork(m *starvpnv1.Network) *appsv1.Deployment {
+func (r *NetworkReconciler) deploymentForNetwork(m *starv1.Network) *appsv1.Deployment {
 	ls := labelsForNetwork(m.Name)
 	replicas := *m.Spec.Replicas
 	privileged := true
@@ -344,13 +352,18 @@ func (r *NetworkReconciler) deploymentForNetwork(m *starvpnv1.Network) *appsv1.D
 							ContainerPort: wgPort,
 							Name:          "wireguard",
 						}},
-						// Lifecycle: &corev1.Lifecycle{
-						// 	PostStart: &corev1.Handler{
-						// 		Exec: &corev1.ExecAction{
-						// 			Command: initialCommand,
-						// 		},
-						// 	},
-						// },
+						Lifecycle: &corev1.Lifecycle{
+							PostStart: &corev1.Handler{
+								Exec: &corev1.ExecAction{
+									Command: upCommand,
+								},
+							},
+							PreStop: &corev1.Handler{
+								Exec: &corev1.ExecAction{
+									Command: downCommand,
+								},
+							},
+						},
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "wireguard",
 							MountPath: "/etc/wireguard",
@@ -376,19 +389,19 @@ func (r *NetworkReconciler) deploymentForNetwork(m *starvpnv1.Network) *appsv1.D
 	return dep
 }
 
-func genSecretNameConfig(n string) string {
-	return names.SimpleNameGenerator.GenerateName(n + "-server-wgconf-")
-}
-
 func genSecretNamePrivate(n string) string {
 	return names.SimpleNameGenerator.GenerateName(n + "-server-private-")
+}
+
+func genSecretNameConfig(n string) string {
+	return names.SimpleNameGenerator.GenerateName(n + "-server-wgconf-")
 }
 
 func deploymentName(n string) string {
 	return n + "-server"
 }
 
-func serverConf(pk wireguard.PrivateKey, m starvpnv1.Network) (string, error) {
+func serverConf(pk wireguard.PrivateKey, m starv1.Network) (string, error) {
 	var as wireguard.IPAddresses
 	for i, ip := range m.Spec.ServerIPs {
 		a, err := wireguard.ParseIPAddress(ip)
@@ -426,6 +439,6 @@ func getDevices() int32 {
 // SetupWithManager sets up the controller with the Manager.
 func (r *NetworkReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&starvpnv1.Network{}).
+		For(&starv1.Network{}).
 		Complete(r)
 }

@@ -31,7 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	starvpnv1 "github.com/vpn-planet/star-operator/api/v1"
+	starv1 "github.com/vpn-planet/star-operator/api/v1"
 	"github.com/vpn-planet/star-operator/controllers"
 	//+kubebuilder:scaffold:imports
 )
@@ -44,7 +44,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
-	utilruntime.Must(starvpnv1.AddToScheme(scheme))
+	utilruntime.Must(starv1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
 
