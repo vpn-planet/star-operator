@@ -184,5 +184,5 @@ func ParseExternalEndpoint(s string) (ExternalEndpoint, error) {
 			}, nil
 		}
 	}
-	return ExternalEndpoint{}, errors.New("invalid form. Not seperated into host and port parts")
+	return ExternalEndpoint{}, errors.New("not seperated into host and port parts by colon")
 }
