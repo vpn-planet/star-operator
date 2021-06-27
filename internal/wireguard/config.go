@@ -20,8 +20,6 @@ const (
 	ipv6PostDown = "ip6tables -D FORWARD -i %i -j ACCEPT; " +
 		"ip6tables -D FORWARD -o %i -j ACCEPT; " +
 		"ip6tables -t nat -D POSTROUTING -o eth0 -j MASQUERADE"
-	portMin = 1
-	portMax = 65535
 )
 
 var (
