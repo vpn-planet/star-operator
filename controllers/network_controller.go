@@ -89,7 +89,7 @@ type NetworkReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
+// NOTE(user): Modify the Reconcile function to compare the state specified by
 // the Network object against the actual cluster state, and then
 // perform operations to make the cluster state reflect the state specified by
 // the user.
@@ -161,6 +161,7 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
+	log.Info("Nothing to do", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 	return ctrl.Result{}, nil
 }
 
@@ -181,7 +182,6 @@ func (r *NetworkReconciler) reconcileNetwork(ctx context.Context, req ctrl.Reque
 		res = &ctrl.Result{}
 		return
 	}
-	log.Info("Found", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 	return
 }
 
@@ -208,11 +208,10 @@ func (r *NetworkReconciler) reconcileSecretReference(ctx context.Context, req ct
 			return
 		}
 
-		log.Error(err, "Patched Secret refence", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+		log.Info("Patched Secret reference", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 		res = &ctrl.Result{Requeue: true}
 		return
 	}
-
 	return
 }
 
@@ -246,7 +245,6 @@ func (r *NetworkReconciler) reconcileSecretConfigReference(ctx context.Context, 
 		res = &ctrl.Result{Requeue: true}
 		return
 	}
-	// TODO: SecretRef.Namespace is to be set?
 	return
 }
 
@@ -259,8 +257,13 @@ func genServerConfigSecretName(n string) string {
 func (r *NetworkReconciler) reconcileSecret(ctx context.Context, req ctrl.Request, net *starv1.Network) (pk wireguard.PrivateKey, res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
+	ns := net.SecretRef.Namespace
+	if ns == "" {
+		ns = net.Namespace
+	}
+
 	sec := &corev1.Secret{}
-	err = r.Get(ctx, types.NamespacedName{Name: net.SecretRef.Name, Namespace: net.SecretRef.Namespace}, sec)
+	err = r.Get(ctx, types.NamespacedName{Name: net.SecretRef.Name, Namespace: ns}, sec)
 	if err != nil && errors.IsNotFound(err) {
 		err = nil
 		var s *corev1.Secret
@@ -291,7 +294,7 @@ func (r *NetworkReconciler) reconcileSecret(ctx context.Context, req ctrl.Reques
 		log.Info("Skipped parsing private key because not present", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
 	} else if len(srvPriv) != wireguard.PrivateKeySize {
 		err = fmt.Errorf("length of private key in Secret is %d while expecting length %d", len(srvPriv), wireguard.PrivateKeySize)
-		log.Error(err, "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+		log.Error(err, "Failed to get server private key", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
 		res = &ctrl.Result{}
 		return
 	} else {
@@ -302,18 +305,23 @@ func (r *NetworkReconciler) reconcileSecret(ctx context.Context, req ctrl.Reques
 }
 
 // 4.a. Generate Secret for general purpose.
-func (r *NetworkReconciler) secret(m *starv1.Network) (*corev1.Secret, error) {
+func (r *NetworkReconciler) secret(net *starv1.Network) (*corev1.Secret, error) {
 	p, err := wireguard.NewPrivateKey()
 	if err != nil {
 		return nil, err
 	}
 
-	ls := r.labels(m.Name)
+	ls := r.labels(net.Name)
+
+	ns := net.SecretRef.Namespace
+	if ns == "" {
+		ns = net.Namespace
+	}
 
 	sec := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      m.SecretRef.Name,
-			Namespace: m.Namespace,
+			Name:      net.SecretRef.Name,
+			Namespace: ns,
 			Labels:    ls,
 		},
 		Data: map[string][]byte{
@@ -321,7 +329,7 @@ func (r *NetworkReconciler) secret(m *starv1.Network) (*corev1.Secret, error) {
 		},
 	}
 
-	ctrl.SetControllerReference(m, sec, r.Scheme)
+	ctrl.SetControllerReference(net, sec, r.Scheme)
 	return sec, nil
 }
 
@@ -380,18 +388,18 @@ func (r *NetworkReconciler) reconcileSecretConfig(ctx context.Context, req ctrl.
 }
 
 // 5.a. Generate Secret for WireGuard Quick Config.
-func (r *NetworkReconciler) secretConf(m *starv1.Network, priv wireguard.PrivateKey) (*corev1.Secret, error) {
-	srvConf, err := serverConf(priv, *m)
+func (r *NetworkReconciler) secretConf(net *starv1.Network, priv wireguard.PrivateKey) (*corev1.Secret, error) {
+	srvConf, err := serverConf(priv, *net)
 	if err != nil {
 		return nil, err
 	}
 
-	ls := r.labels(m.Name)
+	ls := r.labels(net.Name)
 
 	sec := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      m.ConfigSecretRef.Name,
-			Namespace: m.Namespace,
+			Name:      net.ConfigSecretRef.Name,
+			Namespace: net.Namespace,
 			Labels:    ls,
 		},
 		StringData: map[string]string{
@@ -399,7 +407,7 @@ func (r *NetworkReconciler) secretConf(m *starv1.Network, priv wireguard.Private
 		},
 	}
 
-	ctrl.SetControllerReference(m, sec, r.Scheme)
+	ctrl.SetControllerReference(net, sec, r.Scheme)
 	return sec, nil
 }
 
@@ -435,7 +443,7 @@ func (r *NetworkReconciler) reconcileDeployment(ctx context.Context, req ctrl.Re
 		err = nil
 		d := r.deployment(net)
 		log.Info("Creating a new Deployment", "Deployment.Namespace", d.Namespace, "Deployment.Name", d.Name)
-		err = r.Create(ctx, dep)
+		err = r.Create(ctx, d)
 		if err != nil {
 			log.Error(err, "Failed to create new Deployment", "Deployment.Namespace", d.Namespace, "Deployment.Name", d.Name)
 			res = &ctrl.Result{}
@@ -453,12 +461,12 @@ func (r *NetworkReconciler) reconcileDeployment(ctx context.Context, req ctrl.Re
 }
 
 // 6.a. Generate Deployment.
-func (r *NetworkReconciler) deployment(m *starv1.Network) *appsv1.Deployment {
-	ls := r.labels(m.Name)
-	replicas := *m.Spec.Replicas
+func (r *NetworkReconciler) deployment(net *starv1.Network) *appsv1.Deployment {
+	ls := r.labels(net.Name)
+	replicas := *net.Spec.Replicas
 	privileged := true
 
-	wgImg := m.Spec.WireguardImage
+	wgImg := net.Spec.WireguardImage
 	if wgImg == "" {
 		wgImg = wgImgDefault
 	}
@@ -467,8 +475,8 @@ func (r *NetworkReconciler) deployment(m *starv1.Network) *appsv1.Deployment {
 
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      deploymentName(m.Name),
-			Namespace: m.Namespace,
+			Name:      deploymentName(net.Name),
+			Namespace: net.Namespace,
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
@@ -486,8 +494,8 @@ func (r *NetworkReconciler) deployment(m *starv1.Network) *appsv1.Deployment {
 						SecurityContext: &corev1.SecurityContext{
 							Privileged: &privileged,
 						},
-						ImagePullPolicy: m.Spec.ImagePullPolicy,
-						Env:             m.Spec.Env,
+						ImagePullPolicy: net.Spec.ImagePullPolicy,
+						Env:             net.Spec.Env,
 						Command:         hangCommand,
 						Ports: []corev1.ContainerPort{{
 							ContainerPort: wgPort,
@@ -511,12 +519,12 @@ func (r *NetworkReconciler) deployment(m *starv1.Network) *appsv1.Deployment {
 							ReadOnly:  true,
 						}},
 					}},
-					ImagePullSecrets: m.Spec.ImagePullSecrets,
+					ImagePullSecrets: net.Spec.ImagePullSecrets,
 					Volumes: []corev1.Volume{{
 						Name: "wireguard",
 						VolumeSource: corev1.VolumeSource{
 							Secret: &corev1.SecretVolumeSource{
-								SecretName:  m.ConfigSecretRef.Name,
+								SecretName:  net.ConfigSecretRef.Name,
 								DefaultMode: &mode,
 							},
 						},
@@ -526,7 +534,7 @@ func (r *NetworkReconciler) deployment(m *starv1.Network) *appsv1.Deployment {
 		},
 	}
 
-	ctrl.SetControllerReference(m, dep, r.Scheme)
+	ctrl.SetControllerReference(net, dep, r.Scheme)
 	return dep
 }
 

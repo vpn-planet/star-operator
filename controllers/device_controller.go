@@ -75,7 +75,7 @@ type DeviceReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
+// NOTE(user): Modify the Reconcile function to compare the state specified by
 // the Device object against the actual cluster state, and then
 // perform operations to make the cluster state reflect the state specified by
 // the user.
@@ -83,7 +83,7 @@ type DeviceReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
 func (r *DeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	log := log.FromContext(ctx)
 
 	dev, res, err := r.reconcileDevice(ctx, req)
 	if res != nil {
@@ -114,6 +114,7 @@ func (r *DeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		panic(errReturnWithoutResult)
 	}
 
+	log.Info("Nothing to do", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
 	return ctrl.Result{}, nil
 }
 
@@ -125,8 +126,8 @@ func (r *DeviceReconciler) reconcileDevice(ctx context.Context, req ctrl.Request
 	err = r.Get(ctx, req.NamespacedName, dev)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			log.Info("Device resource not found. Ignoring since object must be deleted")
 			err = nil
+			log.Info("Device resource not found. Ignoring since object must be deleted")
 			res = &ctrl.Result{}
 			return
 		}
@@ -134,9 +135,6 @@ func (r *DeviceReconciler) reconcileDevice(ctx context.Context, req ctrl.Request
 		res = &ctrl.Result{}
 		return
 	}
-	log.Info("Found", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
-
-	err = nil
 	return
 }
 
@@ -161,13 +159,9 @@ func (r *DeviceReconciler) reconcileSecretReference(ctx context.Context, req ctr
 			res = &ctrl.Result{}
 			return
 		}
-
-		err = nil
 		res = &ctrl.Result{Requeue: true}
 		return
 	}
-
-	err = nil
 	return
 }
 
@@ -181,14 +175,18 @@ func (r *DeviceReconciler) reconcileNetwork(ctx context.Context, req ctrl.Reques
 	log := log.FromContext(ctx)
 
 	net = &starv1.Network{}
-	err = r.Get(ctx, types.NamespacedName{Name: dev.Spec.NetworkRef.Name, Namespace: dev.Spec.NetworkRef.Namespace}, net)
+
+	ns := dev.Spec.NetworkRef.Namespace
+	if ns == "" {
+		ns = dev.Namespace
+	}
+
+	err = r.Get(ctx, types.NamespacedName{Name: dev.Spec.NetworkRef.Name, Namespace: ns}, net)
 	if err != nil {
 		log.Error(err, "Failed to get Network")
 		res = &ctrl.Result{RequeueAfter: 5 * time.Second}
 		return
 	}
-
-	err = nil
 	return
 }
 
@@ -196,22 +194,28 @@ func (r *DeviceReconciler) reconcileNetwork(ctx context.Context, req ctrl.Reques
 func (r *DeviceReconciler) reconcileSecret(ctx context.Context, req ctrl.Request, dev *starv1.Device, net *starv1.Network) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
+	ns := dev.SecretRef.Namespace
+	if ns == "" {
+		ns = dev.Namespace
+	}
+
 	sec := &corev1.Secret{}
-	err = r.Get(ctx, types.NamespacedName{Name: dev.SecretRef.Name, Namespace: dev.SecretRef.Namespace}, sec)
+	err = r.Get(ctx, types.NamespacedName{Name: dev.SecretRef.Name, Namespace: ns}, sec)
 	if err != nil && errors.IsNotFound(err) {
+		err = nil
 		var spkb []byte
 		spkb, err = base64.StdEncoding.DecodeString(net.Status.ServerPublicKey)
 		if err != nil {
-			log.Error(err, "error in decoding public key from network status as base64")
+			log.Error(err, "Failed to decode public key from network status as base64")
 			res = &ctrl.Result{}
 			return
 		} else if len(spkb) == 0 {
-			err = nil
+			log.Info("Not found public key in Network status. Requeue and wait for the conditions to be met", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 			res = &ctrl.Result{Requeue: true}
 			return
 		} else if len(spkb) != wireguard.PublicKeySize {
-			err = fmt.Errorf("invalid length %d of public key while expecting %d", len(spkb), wireguard.PublicKeySize)
-			log.Error(err, "error in retrieving public key from network status")
+			err = fmt.Errorf("length of public key is %d while expecting %d", len(spkb), wireguard.PublicKeySize)
+			log.Error(err, "Failed to get public key from network status")
 			res = &ctrl.Result{}
 			return
 		}
@@ -255,8 +259,6 @@ func (r *DeviceReconciler) reconcileSecret(ctx context.Context, req ctrl.Request
 			res = &ctrl.Result{}
 			return
 		}
-
-		err = nil
 		res = &ctrl.Result{Requeue: true}
 		return
 	} else if err != nil {
@@ -271,8 +273,8 @@ func (r *DeviceReconciler) reconcileSecret(ctx context.Context, req ctrl.Request
 	if len(devPrivate) == 0 {
 		log.Info("Skipped parsing private key because not present", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
 	} else if len(devPrivate) != wireguard.PrivateKeySize {
-		err = fmt.Errorf("invalid length %d of private key in Secret while expecting length %d", len(devPrivate), wireguard.PrivateKeySize)
-		log.Error(err, "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+		err = fmt.Errorf("length of private key in Secret is %d while expecting length %d", len(devPrivate), wireguard.PrivateKeySize)
+		log.Error(err, "Failed to get private key", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
 		res = &ctrl.Result{}
 		return
 	} else {
@@ -284,19 +286,16 @@ func (r *DeviceReconciler) reconcileSecret(ctx context.Context, req ctrl.Request
 	var psk wireguard.PrivateKey
 	if len(devPreshared) == 0 {
 		log.Info("Skipped parsing preshared key because not present", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
-		err = nil
 		res = &ctrl.Result{Requeue: true}
 		return
 	} else if len(devPreshared) != wireguard.PresharedKeySize {
-		err = fmt.Errorf("invalid length %d of preshared key in Secret while expecting length %d", len(devPreshared), wireguard.PresharedKeySize)
-		log.Error(err, "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+		err = fmt.Errorf("length of preshared key in Secret is %d while expecting length %d", len(devPreshared), wireguard.PresharedKeySize)
+		log.Error(err, "Failed to get preshared key", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
 		res = &ctrl.Result{}
 		return
 	} else {
 		copy(psk[:], devPreshared)
 	}
-
-	err = nil
 	return
 }
 
