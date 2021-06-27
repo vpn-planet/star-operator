@@ -19,7 +19,8 @@ PresharedKey = {{.PeerPresharedKey}}
 AllowedIPs = {{.AllowedIPs}}{{end}}`
 	devConfTmpl = `[Interface]
 PrivateKey = {{.DevicePrivateKey}}
-Address = {{.DeviceAddress}}
+Address = {{.DeviceAddress}}{{if .DNS}}
+DNS = {{.DNS}}{{end}}
 
 [Peer]
 PublicKey = {{.ServerPublicKey}}
@@ -119,6 +120,7 @@ type srvConfDevice struct {
 type devConfRecipient struct {
 	DevicePrivateKey string
 	DeviceAddress    string
+	DNS              string
 	ServerPublicKey  string
 	PeerPresharedKey string
 	AllowedIPs       string
