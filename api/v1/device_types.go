@@ -17,8 +17,12 @@ limitations under the License.
 package v1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// "ios", "macos", or unset.
+type DeviceType string
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
@@ -28,8 +32,11 @@ type DeviceSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// Foo is an example field of Device. Edit device_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	NetworkRef     NetworkReference `json:"networkRef,omitempty"`
+	Type           DeviceType       `json:"type,omitempty"`
+	IPs            []string         `json:"ips,omitempty"`
+	DNS            string           `json:"dns,omitempty"`
+	ServerEndpoint string           `json:"serverEndpoint,omitempty"`
 }
 
 // DeviceStatus defines the observed state of Device
@@ -48,6 +55,8 @@ type Device struct {
 
 	Spec   DeviceSpec   `json:"spec,omitempty"`
 	Status DeviceStatus `json:"status,omitempty"`
+
+	SecretRef corev1.SecretReference `json:"secretRef,omitempty"`
 }
 
 //+kubebuilder:object:root=true
