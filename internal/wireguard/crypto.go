@@ -47,7 +47,7 @@ func (sk *PrivateKey) PublicKey() (pk PublicKey) {
 	return
 }
 
-func (sk PrivateKey) SharedSecret(pk PublicKey) (ss [PublicKeySize]byte, err error) {
+func (sk PrivateKey) SharedSecret(pk PublicKey) (ss PresharedKey, err error) {
 	apk := pk[:]
 	ask := sk[:]
 	var sss []byte
@@ -56,8 +56,8 @@ func (sk PrivateKey) SharedSecret(pk PublicKey) (ss [PublicKeySize]byte, err err
 		return
 	}
 
-	if len(sss) != PublicKeySize {
-		panic(fmt.Sprintf("Length of shared secret calculated is %d but only accepts ", PublicKeySize))
+	if len(sss) != PresharedKeySize {
+		panic(fmt.Sprintf("Length of shared secret calculated is %d, while expecting %d", len(sss), PresharedKeySize))
 	}
 
 	copy(ss[:], sss[:PublicKeySize])
