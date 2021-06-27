@@ -6,6 +6,13 @@ import (
 	"net"
 	"strconv"
 	"strings"
+
+	valid "github.com/asaskevich/govalidator"
+)
+
+const (
+	portMin = 1
+	portMax = 65535
 )
 
 func parseIPPrefix(s string) (net.IP, uint8, error) {
@@ -38,40 +45,43 @@ func parseIPPrefix(s string) (net.IP, uint8, error) {
 }
 
 // Specific private IP address bound to single interface.
-type ipAddress struct {
-	ip  net.IP
-	pre uint8
+type IPAddress struct {
+	IP net.IP
+	// Prefix bits length of mask.
+	Pre uint8
 }
 
-func NewIPAddress(ip net.IP, pre uint8) (ipAddress, error) {
-	if ip[len(ip)-1]&1 == 0 {
-		return ipAddress{}, errors.New("IP address bound to interface cannot end with 0")
+func NewIPAddress(ip net.IP, pre uint8) (IPAddress, error) {
+	for i := pre; int(i) < len(ip)*8; i++ {
+		if (ip[i/8] & (1 << (7 - i%8))) != 0 {
+			return IPAddress{
+				IP:  ip,
+				Pre: pre,
+			}, nil
+		}
 	}
-	return ipAddress{
-		ip:  ip,
-		pre: pre,
-	}, nil
+	return IPAddress{}, errors.New("host part of IP address bound to interface should not be 0")
 }
 
-func (r ipAddress) String() string {
-	return fmt.Sprintf("%s/%d", r.ip, r.pre)
+func (r IPAddress) String() string {
+	return fmt.Sprintf("%s/%d", r.IP, r.Pre)
 }
 
-func ParseIPAddress(s string) (ipAddress, error) {
+func ParseIPAddress(s string) (IPAddress, error) {
 	ip, pre, err := parseIPPrefix(s)
 	if err != nil {
-		return ipAddress{}, err
+		return IPAddress{}, err
 	}
 
 	a, err := NewIPAddress(ip, pre)
 	if err != nil {
-		return ipAddress{}, err
+		return IPAddress{}, err
 	}
 
 	return a, nil
 }
 
-type IPAddresses []ipAddress
+type IPAddresses []IPAddress
 
 func (as IPAddresses) String() string {
 	var ss []string
@@ -81,25 +91,26 @@ func (as IPAddresses) String() string {
 	return strings.Join(ss, ", ")
 }
 
-type ipRange struct {
-	ip  net.IP
-	pre uint8
+type IPRange struct {
+	IP net.IP
+	// Prefix bits length of mask.
+	Pre uint8
 }
 
-func NewIPRange(ip net.IP, pre uint8) (ipRange, error) {
+func NewIPRange(ip net.IP, pre uint8) (IPRange, error) {
 	for i := pre; int(i) < len(ip)*8; i++ {
 		if (ip[i/8] & (1 << (7 - i%8))) != 0 {
-			return ipRange{}, fmt.Errorf("outside of IP range mask should be ending with 0 at %d", i)
+			return IPRange{}, fmt.Errorf("outside of IP range mask should be ending with 0 at %d", i)
 		}
 	}
-	return ipRange{
-		ip:  ip,
-		pre: pre,
+	return IPRange{
+		IP:  ip,
+		Pre: pre,
 	}, nil
 }
 
-func (r ipRange) String() string {
-	return fmt.Sprintf("%s/%d", r.ip, r.pre)
+func (r IPRange) String() string {
+	return fmt.Sprintf("%s/%d", r.IP, r.Pre)
 }
 
 func ParseIP(s string) net.IP {
@@ -114,21 +125,21 @@ func ParseIP(s string) net.IP {
 	return nil
 }
 
-func ParseIPRange(s string) (ipRange, error) {
+func ParseIPRange(s string) (IPRange, error) {
 	ip, pre, err := parseIPPrefix(s)
 	if err != nil {
-		return ipRange{}, err
+		return IPRange{}, err
 	}
 
 	r, err := NewIPRange(ip, pre)
 	if err != nil {
-		return ipRange{}, err
+		return IPRange{}, err
 	}
 
 	return r, nil
 }
 
-type IPRanges []ipRange
+type IPRanges []IPRange
 
 func (rs IPRanges) String() string {
 	var ss []string
@@ -141,10 +152,37 @@ func (rs IPRanges) String() string {
 // Endpoint address that is accessible externally.
 // IP address or DNS resolvable name and port number.
 type ExternalEndpoint struct {
-	host string
-	port uint16
+	Host string
+	Port uint16
 }
 
 func (a ExternalEndpoint) String() string {
-	return fmt.Sprintf("%s:%d", a.host, a.port)
+	return fmt.Sprintf("%s:%d", a.Host, a.Port)
+}
+
+func ParseExternalEndpoint(s string) (ExternalEndpoint, error) {
+	for i := 0; i < len(s); i++ {
+		if s[i] == ':' {
+			h := s[:i]
+			p := s[i:]
+
+			if !valid.IsDNSName(h) {
+				return ExternalEndpoint{}, fmt.Errorf("invalid DNS name in host part %q", h)
+			}
+
+			port, err := strconv.Atoi(p)
+			if err != nil {
+				return ExternalEndpoint{}, fmt.Errorf("invalid form in port part %q: %s", p, err)
+			}
+			if port < portMin || port > portMax {
+				return ExternalEndpoint{}, fmt.Errorf("port number %d is out of port range", port)
+			}
+
+			return ExternalEndpoint{
+				Host: h,
+				Port: uint16(port),
+			}, nil
+		}
+	}
+	return ExternalEndpoint{}, errors.New("invalid form. Not seperated into host and port parts")
 }

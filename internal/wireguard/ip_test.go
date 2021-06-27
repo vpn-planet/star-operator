@@ -9,61 +9,47 @@ import (
 
 func TestNewIPAddress(t *testing.T) {
 	type Case struct {
-		in    ipAddress
+		in    IPAddress
 		isErr bool
 	}
 	cases := []Case{
 		// IPv4 cases
 		{
-			in: ipAddress{
-				ip:  net.IP{10, 10, 0, 1},
-				pre: 16,
+			in: IPAddress{
+				IP:  net.IP{10, 10, 1, 0},
+				Pre: 16,
 			},
 		},
 
 		// IPv4 error cases
 		{
-			in: ipAddress{
-				ip:  net.IP{10, 10, 0, 0},
-				pre: 16,
-			},
-			isErr: true,
-		},
-		{
-			in: ipAddress{
-				ip:  net.IP{10, 10, 0, 0},
-				pre: 8,
+			in: IPAddress{
+				IP:  net.IP{10, 10, 0, 0},
+				Pre: 16,
 			},
 			isErr: true,
 		},
 
 		// IPv6 cases
 		{
-			in: ipAddress{
-				ip:  net.IP{0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01},
-				pre: 64,
+			in: IPAddress{
+				IP:  net.IP{0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00},
+				Pre: 64,
 			},
 		},
 
 		// IPv6 error cases
 		{
-			in: ipAddress{
-				ip:  net.IP{0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-				pre: 64,
-			},
-			isErr: true,
-		},
-		{
-			in: ipAddress{
-				ip:  net.IP{0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-				pre: 64,
+			in: IPAddress{
+				IP:  net.IP{0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+				Pre: 64,
 			},
 			isErr: true,
 		},
 	}
 
 	for i, c := range cases {
-		out, err := NewIPAddress(c.in.ip, c.in.pre)
+		out, err := NewIPAddress(c.in.IP, c.in.Pre)
 		if !c.isErr {
 			if err != nil {
 				t.Errorf(
@@ -96,61 +82,61 @@ func TestNewIPAddress(t *testing.T) {
 
 func TestNewIPRange(t *testing.T) {
 	type Case struct {
-		in    ipRange
+		in    IPRange
 		isErr bool
 	}
 	cases := []Case{
 		// IPv4 cases
 		{
-			in: ipRange{
-				ip:  net.IP{10, 10, 0, 0},
-				pre: 16,
+			in: IPRange{
+				IP:  net.IP{10, 10, 0, 0},
+				Pre: 16,
 			},
 		},
 
 		// IPv4 error cases
 		{
-			in: ipRange{
-				ip:  net.IP{10, 10, 0, 1},
-				pre: 16,
+			in: IPRange{
+				IP:  net.IP{10, 10, 0, 1},
+				Pre: 16,
 			},
 			isErr: true,
 		},
 		{
-			in: ipRange{
-				ip:  net.IP{10, 10, 0, 0},
-				pre: 8,
+			in: IPRange{
+				IP:  net.IP{10, 10, 0, 0},
+				Pre: 8,
 			},
 			isErr: true,
 		},
 
 		// IPv6 cases
 		{
-			in: ipRange{
-				ip:  net.IP{0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-				pre: 64,
+			in: IPRange{
+				IP:  net.IP{0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+				Pre: 64,
 			},
 		},
 
 		// IPv6 error cases
 		{
-			in: ipRange{
-				ip:  net.IP{0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01},
-				pre: 64,
+			in: IPRange{
+				IP:  net.IP{0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01},
+				Pre: 64,
 			},
 			isErr: true,
 		},
 		{
-			in: ipRange{
-				ip:  net.IP{0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-				pre: 64,
+			in: IPRange{
+				IP:  net.IP{0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+				Pre: 64,
 			},
 			isErr: true,
 		},
 	}
 
 	for i, c := range cases {
-		out, err := NewIPRange(c.in.ip, c.in.pre)
+		out, err := NewIPRange(c.in.IP, c.in.Pre)
 		if !c.isErr {
 			if err != nil {
 				t.Errorf(
@@ -190,8 +176,8 @@ func TestIPAddressesString(t *testing.T) {
 		{
 			in: IPAddresses{
 				{
-					ip:  net.IP{10, 10, 0, 1},
-					pre: 16,
+					IP:  net.IP{10, 10, 0, 1},
+					Pre: 16,
 				},
 			},
 			out: "10.10.0.1/16",
@@ -199,12 +185,12 @@ func TestIPAddressesString(t *testing.T) {
 		{
 			in: IPAddresses{
 				{
-					ip:  net.IP{10, 10, 0, 1},
-					pre: 16,
+					IP:  net.IP{10, 10, 0, 1},
+					Pre: 16,
 				},
 				{
-					ip:  net.IP{0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01},
-					pre: 64,
+					IP:  net.IP{0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01},
+					Pre: 64,
 				},
 			},
 			out: "10.10.0.1/16, fc00::1/64",
@@ -383,8 +369,8 @@ func TestIPRangesString(t *testing.T) {
 		{
 			in: IPRanges{
 				{
-					ip:  net.IP{10, 10, 0, 0},
-					pre: 16,
+					IP:  net.IP{10, 10, 0, 0},
+					Pre: 16,
 				},
 			},
 			out: "10.10.0.0/16",
@@ -392,12 +378,12 @@ func TestIPRangesString(t *testing.T) {
 		{
 			in: IPRanges{
 				{
-					ip:  net.IP{10, 10, 0, 0},
-					pre: 16,
+					IP:  net.IP{10, 10, 0, 0},
+					Pre: 16,
 				},
 				{
-					ip:  net.IP{0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-					pre: 64,
+					IP:  net.IP{0xfc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+					Pre: 64,
 				},
 			},
 			out: "10.10.0.0/16, fc00::/64",
@@ -426,8 +412,8 @@ func TestExternalEndpointString(t *testing.T) {
 	cases := []Case{
 		{
 			in: ExternalEndpoint{
-				host: "localhost",
-				port: 8080,
+				Host: "localhost",
+				Port: 8080,
 			},
 			out: "localhost:8080",
 		},
