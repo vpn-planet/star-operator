@@ -51,9 +51,8 @@ type NetworkSpec struct {
 	// +patchStrategy=merge
 	Env []corev1.EnvVar `json:"env,omitempty" patchStrategy:"merge" patchMergeKey:"name"`
 
-	IPv4Enabled   bool   `json:"ipv4Enabled,omitempty"`
-	IPv6Enabled   bool   `json:"ipv6Enabled,omitempty"`
-	ServerAddress string `json:"serverAddress,omitempty"`
+	IPv4Enabled bool `json:"ipv4Enabled,omitempty"`
+	IPv6Enabled bool `json:"ipv6Enabled,omitempty"`
 
 	// Image pull policy.
 	// One of Always, Never, IfNotPresent.
@@ -64,6 +63,9 @@ type NetworkSpec struct {
 	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
 
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+
+	DefaultDeviceDNS      string `json:"defaultDeviceDNS,omitempty"`
+	DefaultServerEndpoint string `json:"defaultServerEndpoint,omitempty"`
 }
 
 // NetworkStatus defines the observed state of Network
@@ -72,6 +74,10 @@ type NetworkStatus struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	Devices int32 `json:"devices,omitempty"`
+
+	// Base64 encoded server WireGuard interface public key.
+	// Automatically set after the reconciliation.
+	ServerPublicKey string `json:"serverPublicKey,omitempty"`
 }
 
 //+kubebuilder:object:root=true
@@ -85,8 +91,8 @@ type Network struct {
 	Spec   NetworkSpec   `json:"spec,omitempty"`
 	Status NetworkStatus `json:"status,omitempty"`
 
-	SecretPrivate LocalSecretReference `json:"secret_private,omitempty"`
-	SecretConfig  LocalSecretReference `json:"secret_config,omitempty"`
+	SecretRef       corev1.SecretReference `json:"secretRef,omitempty"`
+	ConfigSecretRef LocalSecretReference   `json:"configSecretRef,omitempty"`
 }
 
 //+kubebuilder:object:root=true
