@@ -55,6 +55,7 @@ func (d ServerConfDevice) toRecipient() srvConfDevice {
 type DevConf struct {
 	DevicePrivateKey PrivateKey
 	DeviceAddress    IPAddresses
+	DNS              string
 	ServerPublicKey  PublicKey
 	PeerPresharedKey PresharedKey
 	AllowedIPs       IPRanges
@@ -116,6 +117,7 @@ func BuildDevConf(c DevConf) (string, error) {
 	return buildDevConf(devConfRecipient{
 		DevicePrivateKey: base64.StdEncoding.EncodeToString(c.DevicePrivateKey[:]),
 		DeviceAddress:    c.DeviceAddress.String(),
+		DNS:              c.DNS,
 		ServerPublicKey:  base64.StdEncoding.EncodeToString(c.ServerPublicKey[:]),
 		PeerPresharedKey: base64.StdEncoding.EncodeToString(c.PeerPresharedKey[:]),
 		AllowedIPs:       c.AllowedIPs.String(),

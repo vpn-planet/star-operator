@@ -164,7 +164,7 @@ func ParseExternalEndpoint(s string) (ExternalEndpoint, error) {
 	for i := 0; i < len(s); i++ {
 		if s[i] == ':' {
 			h := s[:i]
-			p := s[i:]
+			p := s[i+1:]
 
 			if !valid.IsDNSName(h) {
 				return ExternalEndpoint{}, fmt.Errorf("invalid DNS name in host part %q", h)

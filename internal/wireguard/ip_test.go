@@ -342,10 +342,7 @@ func TestParseIPPrefix(t *testing.T) {
 				)
 			}
 
-			var es string
-			if err != nil {
-				es = err.Error()
-			}
+			es := err.Error()
 
 			if !strings.Contains(es, c.err) {
 				t.Errorf(
@@ -429,6 +426,79 @@ func TestExternalEndpointString(t *testing.T) {
 				out,
 				c.out,
 			)
+		}
+	}
+}
+
+func TestParseExternalEndpoint(t *testing.T) {
+	type Case struct {
+		in    string
+		out   ExternalEndpoint
+		isErr bool
+		err   string
+	}
+	cases := []Case{
+		{
+			in: "localhost:8000",
+			out: ExternalEndpoint{
+				Host: "localhost",
+				Port: 8000,
+			},
+		},
+		{
+			in: "vpn1.example.com:51820",
+			out: ExternalEndpoint{
+				Host: "vpn1.example.com",
+				Port: 51820,
+			},
+		},
+		{
+			in:    "vpn2.example.com",
+			isErr: true,
+			err:   "not seperated",
+		},
+	}
+
+	for i, c := range cases {
+		out, err := ParseExternalEndpoint(c.in)
+		if !c.isErr {
+			if err != nil {
+				t.Errorf(
+					"#%d: error of ParseExternalEndpoint(%q) is %q, but expected to be nil",
+					i,
+					c.in,
+					err,
+				)
+			}
+			if !reflect.DeepEqual(out, c.out) {
+				t.Errorf(
+					"#%d: output of ParseExternalEndpoint(%q) is %v, but expected to be %v",
+					i,
+					c.in,
+					out,
+					c.out,
+				)
+			}
+		} else {
+			if err == nil {
+				t.Errorf(
+					"#%d: error of ParseExternalEndpoint(%q) is nil, but expected not to be nil",
+					i,
+					c.in,
+				)
+			}
+
+			es := err.Error()
+
+			if !strings.Contains(es, c.err) {
+				t.Errorf(
+					"#%d: error of ParseExternalEndpoint(%q) is %q, but expected to contain %q",
+					i,
+					c.in,
+					es,
+					c.err,
+				)
+			}
 		}
 	}
 }

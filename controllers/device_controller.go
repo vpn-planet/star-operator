@@ -17,6 +17,7 @@ limitations under the License.
 package controllers
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
 	"net"
@@ -143,7 +144,7 @@ func (r *DeviceReconciler) reconcileSecretReference(ctx context.Context, req ctr
 	log := log.FromContext(ctx)
 
 	if dev.SecretRef == (corev1.SecretReference{}) {
-		log.Info("Device SecretRef not set. Generating and setting", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
+		log.Info("Device Secret Reference not set. Patching Device Secret Reference", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
 		patch := &unstructured.Unstructured{}
 		patch.SetGroupVersionKind(dev.GroupVersionKind())
 		patch.SetNamespace(dev.Namespace)
@@ -155,7 +156,7 @@ func (r *DeviceReconciler) reconcileSecretReference(ctx context.Context, req ctr
 			FieldManager: "secret_ref",
 		})
 		if err != nil {
-			log.Error(err, "Failed to patch Secret reference")
+			log.Error(err, "Failed to patch Secret Reference", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
 			res = &ctrl.Result{}
 			return
 		}
@@ -194,6 +195,26 @@ func (r *DeviceReconciler) reconcileNetwork(ctx context.Context, req ctrl.Reques
 func (r *DeviceReconciler) reconcileSecret(ctx context.Context, req ctrl.Request, dev *starv1.Device, net *starv1.Network) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
+	// Get server public key from Network Status
+	var spkb []byte
+	spkb, err = base64.StdEncoding.DecodeString(net.Status.ServerPublicKey)
+	if err != nil {
+		log.Error(err, "Failed to decode public key from network status as base64")
+		res = &ctrl.Result{}
+		return
+	} else if len(spkb) == 0 {
+		log.Info("Not found public key in Network Status. Requeue and wait for the conditions to be met", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+		res = &ctrl.Result{Requeue: true}
+		return
+	} else if len(spkb) != wireguard.PublicKeySize {
+		err = fmt.Errorf("length of public key is %d while expecting %d", len(spkb), wireguard.PublicKeySize)
+		log.Error(err, "Failed to get public key from network status")
+		res = &ctrl.Result{}
+		return
+	}
+	var spk wireguard.PublicKey
+	copy(spk[:], spkb)
+
 	ns := dev.SecretRef.Namespace
 	if ns == "" {
 		ns = dev.Namespace
@@ -203,29 +224,11 @@ func (r *DeviceReconciler) reconcileSecret(ctx context.Context, req ctrl.Request
 	err = r.Get(ctx, types.NamespacedName{Name: dev.SecretRef.Name, Namespace: ns}, sec)
 	if err != nil && errors.IsNotFound(err) {
 		err = nil
-		var spkb []byte
-		spkb, err = base64.StdEncoding.DecodeString(net.Status.ServerPublicKey)
-		if err != nil {
-			log.Error(err, "Failed to decode public key from network status as base64")
-			res = &ctrl.Result{}
-			return
-		} else if len(spkb) == 0 {
-			log.Info("Not found public key in Network status. Requeue and wait for the conditions to be met", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
-			res = &ctrl.Result{Requeue: true}
-			return
-		} else if len(spkb) != wireguard.PublicKeySize {
-			err = fmt.Errorf("length of public key is %d while expecting %d", len(spkb), wireguard.PublicKeySize)
-			log.Error(err, "Failed to get public key from network status")
-			res = &ctrl.Result{}
-			return
-		}
-
-		var spk wireguard.PublicKey
-		copy(spk[:], spkb)
 
 		var ppk wireguard.PrivateKey
 		ppk, err = wireguard.NewPrivateKey()
 		if err != nil {
+			log.Error(err, "Failed to create new Secret")
 			res = &ctrl.Result{}
 			return
 		}
@@ -233,6 +236,7 @@ func (r *DeviceReconciler) reconcileSecret(ctx context.Context, req ctrl.Request
 		var sspk wireguard.PrivateKey
 		sspk, err = wireguard.NewPrivateKey()
 		if err != nil {
+			log.Error(err, "Failed to create new Secret")
 			res = &ctrl.Result{}
 			return
 		}
@@ -240,6 +244,7 @@ func (r *DeviceReconciler) reconcileSecret(ctx context.Context, req ctrl.Request
 		var ss wireguard.PresharedKey
 		ss, err = sspk.SharedSecret(sspk.PublicKey())
 		if err != nil {
+			log.Error(err, "Failed to create new Secret")
 			res = &ctrl.Result{}
 			return
 		}
@@ -259,7 +264,7 @@ func (r *DeviceReconciler) reconcileSecret(ctx context.Context, req ctrl.Request
 			res = &ctrl.Result{}
 			return
 		}
-		res = &ctrl.Result{Requeue: true}
+		res = &ctrl.Result{RequeueAfter: time.Second}
 		return
 	} else if err != nil {
 		log.Error(err, "Failed to get Secret")
@@ -283,7 +288,7 @@ func (r *DeviceReconciler) reconcileSecret(ctx context.Context, req ctrl.Request
 
 	// Preshared key
 	devPreshared := sec.Data[devPresharedKeySecretKey]
-	var psk wireguard.PrivateKey
+	var psk wireguard.PresharedKey
 	if len(devPreshared) == 0 {
 		log.Info("Skipped parsing preshared key because not present", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
 		res = &ctrl.Result{Requeue: true}
@@ -296,6 +301,30 @@ func (r *DeviceReconciler) reconcileSecret(ctx context.Context, req ctrl.Request
 	} else {
 		copy(psk[:], devPreshared)
 	}
+
+	// Check whether the Secret data is desired
+	var ds string
+	ds, err = r.deviceConf(*dev, *net, spk, pk, psk)
+	desired := []byte(ds)
+	if err != nil {
+		log.Error(err, "Failed to get desired Device WireGuard Quick Config")
+		res = &ctrl.Result{}
+		return
+	}
+	conf := sec.Data[devConfSecretKey]
+	if !bytes.Equal(conf, desired) {
+		log.Info("Updating Secret Device Config", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+		sec.Data[devConfSecretKey] = desired
+		err = r.Update(ctx, sec)
+		if err != nil {
+			log.Error(err, "Failed to patch Secret Device Config", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+			res = &ctrl.Result{}
+			return
+		}
+		res = &ctrl.Result{RequeueAfter: time.Second}
+		return
+	}
+
 	return
 }
 
@@ -303,7 +332,7 @@ func (r *DeviceReconciler) reconcileSecret(ctx context.Context, req ctrl.Request
 func (r *DeviceReconciler) secret(dev *starv1.Device, net starv1.Network, srvPub wireguard.PublicKey, pk wireguard.PrivateKey, psk wireguard.PresharedKey) (*corev1.Secret, error) {
 	ls := r.labels(dev.Name)
 
-	devConf, err := deviceConf(*dev, net, srvPub, pk, psk)
+	devConf, err := r.deviceConf(*dev, net, srvPub, pk, psk)
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +355,7 @@ func (r *DeviceReconciler) secret(dev *starv1.Device, net starv1.Network, srvPub
 }
 
 // 4.a.a. Generate Secret.
-func deviceConf(dev starv1.Device, net starv1.Network, srvPub wireguard.PublicKey, pk wireguard.PrivateKey, psk wireguard.PresharedKey) (string, error) {
+func (DeviceReconciler) deviceConf(dev starv1.Device, net starv1.Network, srvPub wireguard.PublicKey, pk wireguard.PrivateKey, psk wireguard.PresharedKey) (string, error) {
 	var as wireguard.IPAddresses
 	for i, ip := range dev.Spec.IPs {
 		a, err := wireguard.ParseIPAddress(ip)
@@ -336,18 +365,24 @@ func deviceConf(dev starv1.Device, net starv1.Network, srvPub wireguard.PublicKe
 		as = append(as, a)
 	}
 
-	e := dev.Spec.ServerEndpoint
-	if e == "" {
-		e = net.Spec.DefaultServerEndpoint
+	e := net.Spec.DefaultServerEndpoint
+	if dev.Spec.ServerEndpoint != nil {
+		e = *dev.Spec.ServerEndpoint
 	}
 	se, err := wireguard.ParseExternalEndpoint(e)
 	if err != nil {
 		return "", fmt.Errorf("parse error in server external endpoint %q: %s", e, err)
 	}
 
+	dns := net.Spec.DefaultDeviceDNS
+	if dev.Spec.DNS != nil {
+		dns = *dev.Spec.DNS
+	}
+
 	return wireguard.BuildDevConf(wireguard.DevConf{
 		DevicePrivateKey: pk,
 		DeviceAddress:    as,
+		DNS:              dns,
 		ServerPublicKey:  srvPub,
 		PeerPresharedKey: psk,
 		AllowedIPs:       allIPRanges,

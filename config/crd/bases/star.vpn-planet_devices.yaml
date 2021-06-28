@@ -50,6 +50,9 @@ spec:
             description: DeviceSpec defines the desired state of Device
             properties:
               dns:
+                description: Empty string means overwrite default value in server
+                  config with empty, while nil means to use default value in server
+                  config.
                 type: string
               ips:
                 items:
@@ -67,6 +70,9 @@ spec:
                     type: string
                 type: object
               serverEndpoint:
+                description: Empty string means overwrite default value in server
+                  config with empty, while nil means to use default value in server
+                  config.
                 type: string
               type:
                 description: '"ios", "macos", or unset.'

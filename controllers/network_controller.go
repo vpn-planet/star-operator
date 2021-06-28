@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"time"
@@ -86,6 +87,7 @@ type NetworkReconciler struct {
 //+kubebuilder:rbac:groups=star.vpn-planet,resources=networks/finalizers,verbs=update
 //+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=star.vpn-planet,resources=devices,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -122,6 +124,13 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	var pk wireguard.PrivateKey
 	pk, res, err = r.reconcileSecret(ctx, req, net)
+	if res != nil {
+		return *res, err
+	} else if err != nil {
+		panic(errReturnWithoutResult)
+	}
+
+	res, err = r.reconcileStatusPubkey(ctx, req, net, pk)
 	if res != nil {
 		return *res, err
 	} else if err != nil {
@@ -190,7 +199,7 @@ func (r *NetworkReconciler) reconcileSecretReference(ctx context.Context, req ct
 	log := log.FromContext(ctx)
 
 	if net.SecretRef == (corev1.SecretReference{}) {
-		log.Info("Network SecretRef not set. Generating and setting", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+		log.Info("Network Secret Reference not set. Patching Network Secret Reference", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 		patch := &unstructured.Unstructured{}
 		patch.SetGroupVersionKind(net.GroupVersionKind())
 		patch.SetNamespace(net.Namespace)
@@ -225,7 +234,7 @@ func (r *NetworkReconciler) reconcileSecretConfigReference(ctx context.Context, 
 	log := log.FromContext(ctx)
 
 	if net.ConfigSecretRef == (starv1.LocalSecretReference{}) {
-		log.Info("Network ConfigSecretRef not set. Generating and setting", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+		log.Info("Network Config Secret Reference not set. Patching Network Network Config Secret Reference", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 		patch := &unstructured.Unstructured{}
 		patch.SetGroupVersionKind(net.GroupVersionKind())
 		patch.SetNamespace(net.Namespace)
@@ -280,8 +289,7 @@ func (r *NetworkReconciler) reconcileSecret(ctx context.Context, req ctrl.Reques
 			res = &ctrl.Result{}
 			return
 		}
-
-		res = &ctrl.Result{Requeue: true}
+		res = &ctrl.Result{RequeueAfter: time.Second}
 		return
 	} else if err != nil {
 		log.Error(err, "Failed to get Secret")
@@ -300,7 +308,6 @@ func (r *NetworkReconciler) reconcileSecret(ctx context.Context, req ctrl.Reques
 	} else {
 		copy(pk[:], srvPriv)
 	}
-
 	return
 }
 
@@ -333,6 +340,41 @@ func (r *NetworkReconciler) secret(net *starv1.Network) (*corev1.Secret, error) 
 	return sec, nil
 }
 
+// TODO. Reconcile Secret for WireGuard Quick Config.
+func (r *NetworkReconciler) reconcileStatusPubkey(ctx context.Context, req ctrl.Request, net *starv1.Network, pk wireguard.PrivateKey) (res *ctrl.Result, err error) {
+	log := log.FromContext(ctx)
+
+	if len(pk) == 0 {
+		log.Info("Private key is not set. Skipping checking Network Status server public key", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+		return
+	}
+
+	pubkey := pk.PublicKey()
+	desired := base64.StdEncoding.EncodeToString(pubkey[:])
+
+	if net.Status.ServerPublicKey != desired {
+		log.Info("Patching Network Status server public key", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+		patch := &unstructured.Unstructured{}
+		patch.SetGroupVersionKind(net.GroupVersionKind())
+		patch.SetNamespace(net.Namespace)
+		patch.SetName(net.Name)
+		patch.UnstructuredContent()["status"] = map[string]interface{}{
+			"serverPublicKey": desired,
+		}
+		err = r.Status().Patch(ctx, patch, client.Apply, &client.PatchOptions{
+			FieldManager: "network_status_server_public_key",
+		})
+		if err != nil {
+			log.Error(err, "Failed to patch Network Status server public key", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+			res = &ctrl.Result{}
+			return
+		}
+		res = &ctrl.Result{Requeue: true}
+		return
+	}
+	return
+}
+
 // 5. Reconcile Secret for WireGuard Quick Config.
 func (r *NetworkReconciler) reconcileSecretConfig(ctx context.Context, req ctrl.Request, net *starv1.Network, pk wireguard.PrivateKey) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
@@ -355,7 +397,7 @@ func (r *NetworkReconciler) reconcileSecretConfig(ctx context.Context, req ctrl.
 			res = &ctrl.Result{}
 			return
 		}
-		res = &ctrl.Result{Requeue: true}
+		res = &ctrl.Result{RequeueAfter: time.Second}
 		return
 	} else if err != nil {
 		log.Error(err, "Failed to get Deployment")
@@ -383,7 +425,6 @@ func (r *NetworkReconciler) reconcileSecretConfig(ctx context.Context, req ctrl.
 			return
 		}
 	}
-
 	return
 }
 
@@ -450,7 +491,7 @@ func (r *NetworkReconciler) reconcileDeployment(ctx context.Context, req ctrl.Re
 			return
 		}
 		// Deployment created successfully - return and requeue
-		res = &ctrl.Result{Requeue: true}
+		res = &ctrl.Result{RequeueAfter: time.Second}
 		return
 	} else if err != nil {
 		log.Error(err, "Failed to get Deployment")
@@ -548,6 +589,7 @@ func (r *NetworkReconciler) reconcileDeploymentReplicas(ctx context.Context, req
 	log := log.FromContext(ctx)
 
 	if *dep.Spec.Replicas != *net.Spec.Replicas {
+		log.Info("Patching Network Spec replicas", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 		patch := &unstructured.Unstructured{}
 		patch.SetGroupVersionKind(dep.GroupVersionKind())
 		patch.SetNamespace(dep.Namespace)

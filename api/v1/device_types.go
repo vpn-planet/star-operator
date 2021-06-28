@@ -32,11 +32,15 @@ type DeviceSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	NetworkRef     NetworkReference `json:"networkRef,omitempty"`
-	Type           DeviceType       `json:"type,omitempty"`
-	IPs            []string         `json:"ips,omitempty"`
-	DNS            string           `json:"dns,omitempty"`
-	ServerEndpoint string           `json:"serverEndpoint,omitempty"`
+	NetworkRef NetworkReference `json:"networkRef,omitempty"`
+	Type       DeviceType       `json:"type,omitempty"`
+	IPs        []string         `json:"ips,omitempty"`
+	// Empty string means overwrite default value in server config with empty, while nil
+	// means to use default value in server config.
+	DNS *string `json:"dns,omitempty"`
+	// Empty string means overwrite default value in server config with empty, while nil
+	// means to use default value in server config.
+	ServerEndpoint *string `json:"serverEndpoint,omitempty"`
 }
 
 // DeviceStatus defines the observed state of Device
