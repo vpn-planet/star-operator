@@ -17,15 +17,11 @@ limitations under the License.
 package controllers
 
 import (
-	"bytes"
-	"encoding/base64"
-	"fmt"
 	"net"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -84,8 +80,6 @@ type DeviceReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
 func (r *DeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := log.FromContext(ctx)
-
 	dev, res, err := r.reconcileDevice(ctx, req)
 	if res != nil {
 		return *res, err
@@ -108,14 +102,13 @@ func (r *DeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		panic(errReturnWithoutResult)
 	}
 
-	res, err = r.reconcileSecret(ctx, req, dev, net)
+	res, err = commonNetDevReconcile(r.Client, ctx, req, *net)
 	if res != nil {
 		return *res, err
 	} else if err != nil {
 		panic(errReturnWithoutResult)
 	}
 
-	log.Info("Nothing to do", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
 	return ctrl.Result{}, nil
 }
 
@@ -128,8 +121,14 @@ func (r *DeviceReconciler) reconcileDevice(ctx context.Context, req ctrl.Request
 	if err != nil {
 		if errors.IsNotFound(err) {
 			err = nil
-			log.Info("Device resource not found. Ignoring since object must be deleted")
-			res = &ctrl.Result{}
+			res, err = commonNetDevAllReconcile(r.Client, ctx, req)
+			if res == nil {
+				if err != nil {
+					panic(errReturnWithoutResult)
+				}
+				log.Info("Device resource not found and all Network up to date. Ignoring since object must be deleted")
+				res = &ctrl.Result{}
+			}
 			return
 		}
 		log.Error(err, "Failed to get Device")
@@ -191,207 +190,8 @@ func (r *DeviceReconciler) reconcileNetwork(ctx context.Context, req ctrl.Reques
 	return
 }
 
-// 4. Reconcile Secret for general purpose.
-func (r *DeviceReconciler) reconcileSecret(ctx context.Context, req ctrl.Request, dev *starv1.Device, net *starv1.Network) (res *ctrl.Result, err error) {
-	log := log.FromContext(ctx)
-
-	// Get server public key from Network Status
-	var spkb []byte
-	spkb, err = base64.StdEncoding.DecodeString(net.Status.ServerPublicKey)
-	if err != nil {
-		log.Error(err, "Failed to decode public key from network status as base64")
-		res = &ctrl.Result{}
-		return
-	} else if len(spkb) == 0 {
-		log.Info("Not found public key in Network Status. Requeue and wait for the conditions to be met", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
-		res = &ctrl.Result{Requeue: true}
-		return
-	} else if len(spkb) != wireguard.PublicKeySize {
-		err = fmt.Errorf("length of public key is %d while expecting %d", len(spkb), wireguard.PublicKeySize)
-		log.Error(err, "Failed to get public key from network status")
-		res = &ctrl.Result{}
-		return
-	}
-	var spk wireguard.PublicKey
-	copy(spk[:], spkb)
-
-	ns := dev.SecretRef.Namespace
-	if ns == "" {
-		ns = dev.Namespace
-	}
-
-	sec := &corev1.Secret{}
-	err = r.Get(ctx, types.NamespacedName{Name: dev.SecretRef.Name, Namespace: ns}, sec)
-	if err != nil && errors.IsNotFound(err) {
-		err = nil
-
-		var ppk wireguard.PrivateKey
-		ppk, err = wireguard.NewPrivateKey()
-		if err != nil {
-			log.Error(err, "Failed to create new Secret")
-			res = &ctrl.Result{}
-			return
-		}
-
-		var sspk wireguard.PrivateKey
-		sspk, err = wireguard.NewPrivateKey()
-		if err != nil {
-			log.Error(err, "Failed to create new Secret")
-			res = &ctrl.Result{}
-			return
-		}
-
-		var ss wireguard.PresharedKey
-		ss, err = sspk.SharedSecret(sspk.PublicKey())
-		if err != nil {
-			log.Error(err, "Failed to create new Secret")
-			res = &ctrl.Result{}
-			return
-		}
-
-		var sec *corev1.Secret
-		sec, err = r.secret(dev, *net, spk, ppk, ss)
-		if err != nil {
-			log.Error(err, "Failed to create new Secret")
-			res = &ctrl.Result{}
-			return
-		}
-		log.Info("Creating a new Secret", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
-
-		err = r.Create(ctx, sec)
-		if err != nil {
-			log.Error(err, "Failed to create new Secret", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
-			res = &ctrl.Result{}
-			return
-		}
-		res = &ctrl.Result{RequeueAfter: time.Second}
-		return
-	} else if err != nil {
-		log.Error(err, "Failed to get Secret")
-		res = &ctrl.Result{}
-		return
-	}
-
-	// Private key
-	devPrivate := sec.Data[devPrivateKeySecretKey]
-	var pk wireguard.PrivateKey
-	if len(devPrivate) == 0 {
-		log.Info("Skipped parsing private key because not present", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
-	} else if len(devPrivate) != wireguard.PrivateKeySize {
-		err = fmt.Errorf("length of private key in Secret is %d while expecting length %d", len(devPrivate), wireguard.PrivateKeySize)
-		log.Error(err, "Failed to get private key", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
-		res = &ctrl.Result{}
-		return
-	} else {
-		copy(pk[:], devPrivate)
-	}
-
-	// Preshared key
-	devPreshared := sec.Data[devPresharedKeySecretKey]
-	var psk wireguard.PresharedKey
-	if len(devPreshared) == 0 {
-		log.Info("Skipped parsing preshared key because not present", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
-		res = &ctrl.Result{Requeue: true}
-		return
-	} else if len(devPreshared) != wireguard.PresharedKeySize {
-		err = fmt.Errorf("length of preshared key in Secret is %d while expecting length %d", len(devPreshared), wireguard.PresharedKeySize)
-		log.Error(err, "Failed to get preshared key", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
-		res = &ctrl.Result{}
-		return
-	} else {
-		copy(psk[:], devPreshared)
-	}
-
-	// Check whether the Secret data is desired
-	var ds string
-	ds, err = r.deviceConf(*dev, *net, spk, pk, psk)
-	desired := []byte(ds)
-	if err != nil {
-		log.Error(err, "Failed to get desired Device WireGuard Quick Config")
-		res = &ctrl.Result{}
-		return
-	}
-	conf := sec.Data[devConfSecretKey]
-	if !bytes.Equal(conf, desired) {
-		log.Info("Updating Secret Device Config", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
-		sec.Data[devConfSecretKey] = desired
-		err = r.Update(ctx, sec)
-		if err != nil {
-			log.Error(err, "Failed to patch Secret Device Config", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
-			res = &ctrl.Result{}
-			return
-		}
-		res = &ctrl.Result{RequeueAfter: time.Second}
-		return
-	}
-
-	return
-}
-
-// 4.a. Generate Secret.
-func (r *DeviceReconciler) secret(dev *starv1.Device, net starv1.Network, srvPub wireguard.PublicKey, pk wireguard.PrivateKey, psk wireguard.PresharedKey) (*corev1.Secret, error) {
-	ls := r.labels(dev.Name)
-
-	devConf, err := r.deviceConf(*dev, net, srvPub, pk, psk)
-	if err != nil {
-		return nil, err
-	}
-
-	sec := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      dev.SecretRef.Name,
-			Namespace: dev.Namespace,
-			Labels:    ls,
-		},
-		Data: map[string][]byte{
-			devPrivateKeySecretKey:   pk[:],
-			devPresharedKeySecretKey: psk[:],
-			devConfSecretKey:         []byte(devConf),
-		},
-	}
-
-	ctrl.SetControllerReference(dev, sec, r.Scheme)
-	return sec, nil
-}
-
-// 4.a.a. Generate Secret.
-func (DeviceReconciler) deviceConf(dev starv1.Device, net starv1.Network, srvPub wireguard.PublicKey, pk wireguard.PrivateKey, psk wireguard.PresharedKey) (string, error) {
-	var as wireguard.IPAddresses
-	for i, ip := range dev.Spec.IPs {
-		a, err := wireguard.ParseIPAddress(ip)
-		if err != nil {
-			return "", fmt.Errorf("error in %d-th server ip %q: %s", i+1, ip, err)
-		}
-		as = append(as, a)
-	}
-
-	e := net.Spec.DefaultServerEndpoint
-	if dev.Spec.ServerEndpoint != nil {
-		e = *dev.Spec.ServerEndpoint
-	}
-	se, err := wireguard.ParseExternalEndpoint(e)
-	if err != nil {
-		return "", fmt.Errorf("parse error in server external endpoint %q: %s", e, err)
-	}
-
-	dns := net.Spec.DefaultDeviceDNS
-	if dev.Spec.DNS != nil {
-		dns = *dev.Spec.DNS
-	}
-
-	return wireguard.BuildDevConf(wireguard.DevConf{
-		DevicePrivateKey: pk,
-		DeviceAddress:    as,
-		DNS:              dns,
-		ServerPublicKey:  srvPub,
-		PeerPresharedKey: psk,
-		AllowedIPs:       allIPRanges,
-		ServerEndpoint:   se,
-	})
-}
-
 // Common labels for resources managed by Device.
-func (DeviceReconciler) labels(name string) map[string]string {
+func labelsForDevice(name string) map[string]string {
 	return map[string]string{
 		"vpn-planet":      "true",
 		"star.vpn-planet": "true",

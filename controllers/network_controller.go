@@ -99,8 +99,6 @@ type NetworkReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.8.3/pkg/reconcile
 func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := log.FromContext(ctx)
-
 	net, res, err := r.reconcileNetwork(ctx, req)
 	if res != nil {
 		return *res, err
@@ -159,18 +157,13 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		panic(errReturnWithoutResult)
 	}
 
-	// TODO: after devices
-	devices := getDevices()
-	if devices != net.Status.Devices {
-		net.Status.Devices = devices
-		err := r.Status().Update(ctx, net)
-		if err != nil {
-			log.Error(err, "Failed to update Network status")
-			return ctrl.Result{}, err
-		}
+	res, err = commonNetDevReconcile(r.Client, ctx, req, *net)
+	if res != nil {
+		return *res, err
+	} else if err != nil {
+		panic(errReturnWithoutResult)
 	}
 
-	log.Info("Nothing to do", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 	return ctrl.Result{}, nil
 }
 
@@ -289,7 +282,7 @@ func (r *NetworkReconciler) reconcileSecret(ctx context.Context, req ctrl.Reques
 			res = &ctrl.Result{}
 			return
 		}
-		res = &ctrl.Result{RequeueAfter: time.Second}
+		res = &ctrl.Result{RequeueAfter: 5 * time.Second}
 		return
 	} else if err != nil {
 		log.Error(err, "Failed to get Secret")
@@ -318,7 +311,7 @@ func (r *NetworkReconciler) secret(net *starv1.Network) (*corev1.Secret, error) 
 		return nil, err
 	}
 
-	ls := r.labels(net.Name)
+	ls := labelsForNetwork(net.Name)
 
 	ns := net.SecretRef.Namespace
 	if ns == "" {
@@ -340,7 +333,7 @@ func (r *NetworkReconciler) secret(net *starv1.Network) (*corev1.Secret, error) 
 	return sec, nil
 }
 
-// TODO. Reconcile Secret for WireGuard Quick Config.
+// 5. Reconcile Secret for WireGuard Quick Config.
 func (r *NetworkReconciler) reconcileStatusPubkey(ctx context.Context, req ctrl.Request, net *starv1.Network, pk wireguard.PrivateKey) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
@@ -375,7 +368,7 @@ func (r *NetworkReconciler) reconcileStatusPubkey(ctx context.Context, req ctrl.
 	return
 }
 
-// 5. Reconcile Secret for WireGuard Quick Config.
+// 6. Reconcile Secret for WireGuard Quick Config.
 func (r *NetworkReconciler) reconcileSecretConfig(ctx context.Context, req ctrl.Request, net *starv1.Network, pk wireguard.PrivateKey) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
@@ -397,7 +390,7 @@ func (r *NetworkReconciler) reconcileSecretConfig(ctx context.Context, req ctrl.
 			res = &ctrl.Result{}
 			return
 		}
-		res = &ctrl.Result{RequeueAfter: time.Second}
+		res = &ctrl.Result{RequeueAfter: 5 * time.Second}
 		return
 	} else if err != nil {
 		log.Error(err, "Failed to get Deployment")
@@ -428,14 +421,14 @@ func (r *NetworkReconciler) reconcileSecretConfig(ctx context.Context, req ctrl.
 	return
 }
 
-// 5.a. Generate Secret for WireGuard Quick Config.
+// 6.a. Generate Secret for WireGuard Quick Config.
 func (r *NetworkReconciler) secretConf(net *starv1.Network, priv wireguard.PrivateKey) (*corev1.Secret, error) {
 	srvConf, err := serverConf(priv, *net)
 	if err != nil {
 		return nil, err
 	}
 
-	ls := r.labels(net.Name)
+	ls := labelsForNetwork(net.Name)
 
 	sec := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -452,7 +445,7 @@ func (r *NetworkReconciler) secretConf(net *starv1.Network, priv wireguard.Priva
 	return sec, nil
 }
 
-// 5.b. Generate server WireGuard Quick Config content.
+// 6.b. Generate server WireGuard Quick Config content.
 func serverConf(pk wireguard.PrivateKey, m starv1.Network) (string, error) {
 	var as wireguard.IPAddresses
 	for i, ip := range m.Spec.ServerIPs {
@@ -474,7 +467,7 @@ func serverConf(pk wireguard.PrivateKey, m starv1.Network) (string, error) {
 	})
 }
 
-// 6. Reconcile Deployment.
+// 7. Reconcile Deployment.
 func (r *NetworkReconciler) reconcileDeployment(ctx context.Context, req ctrl.Request, net *starv1.Network) (dep *appsv1.Deployment, res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
@@ -501,9 +494,9 @@ func (r *NetworkReconciler) reconcileDeployment(ctx context.Context, req ctrl.Re
 	return
 }
 
-// 6.a. Generate Deployment.
+// 7.a. Generate Deployment.
 func (r *NetworkReconciler) deployment(net *starv1.Network) *appsv1.Deployment {
-	ls := r.labels(net.Name)
+	ls := labelsForNetwork(net.Name)
 	replicas := *net.Spec.Replicas
 	privileged := true
 
@@ -579,12 +572,12 @@ func (r *NetworkReconciler) deployment(net *starv1.Network) *appsv1.Deployment {
 	return dep
 }
 
-// 6.a.a. Generate Deployment name.
+// 7.a.a. Generate Deployment name.
 func deploymentName(n string) string {
 	return n + "-server"
 }
 
-// 7. Reconcile Deployment Replicas.
+// 8. Reconcile Deployment Replicas.
 func (r *NetworkReconciler) reconcileDeploymentReplicas(ctx context.Context, req ctrl.Request, net *starv1.Network, dep *appsv1.Deployment) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
@@ -612,18 +605,13 @@ func (r *NetworkReconciler) reconcileDeploymentReplicas(ctx context.Context, req
 }
 
 // Common labels for resources managed by Network.
-func (NetworkReconciler) labels(name string) map[string]string {
+func labelsForNetwork(name string) map[string]string {
 	return map[string]string{
 		"vpn-planet":      "true",
 		"star.vpn-planet": "true",
 		"app":             "network",
 		"name":            name,
 	}
-}
-
-func getDevices() int32 {
-	// TODO: after devices
-	return 3
 }
 
 // SetupWithManager sets up the controller with the Manager.
