@@ -18,12 +18,10 @@ package controllers
 
 import (
 	"net"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
 
 	"context"
 
@@ -102,7 +100,7 @@ func (r *DeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		panic(errReturnWithoutResult)
 	}
 
-	res, err = commonNetDevReconcile(r.Client, ctx, req, *net)
+	res, err = reconcileDeviceSecret(r.Client, ctx, req, *dev, *net)
 	if res != nil {
 		return *res, err
 	} else if err != nil {
@@ -121,14 +119,8 @@ func (r *DeviceReconciler) reconcileDevice(ctx context.Context, req ctrl.Request
 	if err != nil {
 		if errors.IsNotFound(err) {
 			err = nil
-			res, err = commonNetDevAllReconcile(r.Client, ctx, req)
-			if res == nil {
-				if err != nil {
-					panic(errReturnWithoutResult)
-				}
-				log.Info("Device resource not found and all Network up to date. Ignoring since object must be deleted")
-				res = &ctrl.Result{}
-			}
+			log.Info("Device resource not found. Ignoring since object must be deleted")
+			res = &ctrl.Result{}
 			return
 		}
 		log.Error(err, "Failed to get Device")
@@ -138,12 +130,12 @@ func (r *DeviceReconciler) reconcileDevice(ctx context.Context, req ctrl.Request
 	return
 }
 
-// 2. Reconcile Device Secret reference.
+// 2. Reconcile Device Secret Reference.
 func (r *DeviceReconciler) reconcileSecretReference(ctx context.Context, req ctrl.Request, dev *starv1.Device) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
 	if dev.SecretRef == (corev1.SecretReference{}) {
-		log.Info("Device Secret Reference not set. Patching Device Secret Reference", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
+		log.Info("Device SecretRef not set. Patching Device SecretRef", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
 		patch := &unstructured.Unstructured{}
 		patch.SetGroupVersionKind(dev.GroupVersionKind())
 		patch.SetNamespace(dev.Namespace)
@@ -155,7 +147,7 @@ func (r *DeviceReconciler) reconcileSecretReference(ctx context.Context, req ctr
 			FieldManager: "secret_ref",
 		})
 		if err != nil {
-			log.Error(err, "Failed to patch Secret Reference", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
+			log.Error(err, "Failed to patch SecretRef", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
 			res = &ctrl.Result{}
 			return
 		}
@@ -176,15 +168,10 @@ func (r *DeviceReconciler) reconcileNetwork(ctx context.Context, req ctrl.Reques
 
 	net = &starv1.Network{}
 
-	ns := dev.Spec.NetworkRef.Namespace
-	if ns == "" {
-		ns = dev.Namespace
-	}
-
-	err = r.Get(ctx, types.NamespacedName{Name: dev.Spec.NetworkRef.Name, Namespace: ns}, net)
+	err = r.Get(ctx, dev.NetworkNamespacedName(), net)
 	if err != nil {
 		log.Error(err, "Failed to get Network")
-		res = &ctrl.Result{RequeueAfter: 5 * time.Second}
+		res = &ctrl.Result{Requeue: true}
 		return
 	}
 	return

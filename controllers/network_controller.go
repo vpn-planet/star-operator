@@ -36,6 +36,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	starv1 "github.com/vpn-planet/star-operator/api/v1"
 	"github.com/vpn-planet/star-operator/internal/wireguard"
@@ -157,11 +158,27 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		panic(errReturnWithoutResult)
 	}
 
-	res, err = commonNetDevReconcile(r.Client, ctx, req, *net)
+	devs, res, err := reconcileNetworkDevices(r.Client, ctx, req, *net)
 	if res != nil {
 		return *res, err
 	} else if err != nil {
 		panic(errReturnWithoutResult)
+	}
+
+	res, err = reconcileNetworkStatusDevices(r.Client, ctx, req, *net, devs)
+	if res != nil {
+		return *res, err
+	} else if err != nil {
+		panic(errReturnWithoutResult)
+	}
+
+	for _, dev := range devs {
+		res, err = reconcileDeviceSecret(r.Client, ctx, req, dev, *net)
+		if res != nil {
+			return *res, err
+		} else if err != nil {
+			panic(errReturnWithoutResult)
+		}
 	}
 
 	return ctrl.Result{}, nil
@@ -187,12 +204,12 @@ func (r *NetworkReconciler) reconcileNetwork(ctx context.Context, req ctrl.Reque
 	return
 }
 
-// 2. Reconcile Network Secret reference.
+// 2. Reconcile Network Secret Reference.
 func (r *NetworkReconciler) reconcileSecretReference(ctx context.Context, req ctrl.Request, net *starv1.Network) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
 	if net.SecretRef == (corev1.SecretReference{}) {
-		log.Info("Network Secret Reference not set. Patching Network Secret Reference", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+		log.Info("Network SecretRef not set. Patching Network SecretRef", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 		patch := &unstructured.Unstructured{}
 		patch.SetGroupVersionKind(net.GroupVersionKind())
 		patch.SetNamespace(net.Namespace)
@@ -205,12 +222,11 @@ func (r *NetworkReconciler) reconcileSecretReference(ctx context.Context, req ct
 		})
 
 		if err != nil {
-			log.Error(err, "Failed to patch Secret reference")
+			log.Error(err, "Failed to patch Network SecretRef")
 			res = &ctrl.Result{}
 			return
 		}
 
-		log.Info("Patched Secret reference", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 		res = &ctrl.Result{Requeue: true}
 		return
 	}
@@ -222,12 +238,12 @@ func genNetworkSecretName(n string) string {
 	return names.SimpleNameGenerator.GenerateName(n + "-server-")
 }
 
-// 3. Reconcile Network Secret reference for WireGuard Quick Config.
+// 3. Reconcile Network Secret Reference for WireGuard Quick Config.
 func (r *NetworkReconciler) reconcileSecretConfigReference(ctx context.Context, req ctrl.Request, net *starv1.Network) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
 	if net.ConfigSecretRef == (starv1.LocalSecretReference{}) {
-		log.Info("Network Config Secret Reference not set. Patching Network Network Config Secret Reference", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+		log.Info("Network Config SecretRef not set. Patching Network Network Config SecretRef", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 		patch := &unstructured.Unstructured{}
 		patch.SetGroupVersionKind(net.GroupVersionKind())
 		patch.SetNamespace(net.Namespace)
@@ -240,7 +256,7 @@ func (r *NetworkReconciler) reconcileSecretConfigReference(ctx context.Context, 
 		})
 
 		if err != nil {
-			log.Error(err, "Failed to patch Secret reference for WireGuard Quick Config")
+			log.Error(err, "Failed to patch Network SecretRef for WireGuard Quick Config")
 			res = &ctrl.Result{}
 			return
 		}
@@ -390,7 +406,7 @@ func (r *NetworkReconciler) reconcileSecretConfig(ctx context.Context, req ctrl.
 			res = &ctrl.Result{}
 			return
 		}
-		res = &ctrl.Result{RequeueAfter: 5 * time.Second}
+		res = &ctrl.Result{Requeue: true}
 		return
 	} else if err != nil {
 		log.Error(err, "Failed to get Deployment")
@@ -414,7 +430,7 @@ func (r *NetworkReconciler) reconcileSecretConfig(ctx context.Context, req ctrl.
 			log.Info("Updating Secret for WireGuard Quick Config", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
 			sec.Data[wg0ConfKey] = []byte(wg0ConfDesired)
 			r.Update(ctx, sec)
-			res = &ctrl.Result{RequeueAfter: 3 * time.Second}
+			res = &ctrl.Result{Requeue: true}
 			return
 		}
 	}
@@ -484,7 +500,7 @@ func (r *NetworkReconciler) reconcileDeployment(ctx context.Context, req ctrl.Re
 			return
 		}
 		// Deployment created successfully - return and requeue
-		res = &ctrl.Result{RequeueAfter: time.Second}
+		res = &ctrl.Result{Requeue: true}
 		return
 	} else if err != nil {
 		log.Error(err, "Failed to get Deployment")
@@ -618,5 +634,6 @@ func labelsForNetwork(name string) map[string]string {
 func (r *NetworkReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&starv1.Network{}).
+		Watches(&source.Kind{Type: &starv1.Device{}}, &deviceEnqueueRequestForNetwork{}).
 		Complete(r)
 }

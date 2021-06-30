@@ -22,49 +22,8 @@ import (
 	"github.com/vpn-planet/star-operator/internal/wireguard"
 )
 
-func commonNetDevAllReconcile(c client.Client, ctx context.Context, req ctrl.Request) (*ctrl.Result, error) {
-	log := log.FromContext(ctx)
-
-	nl := &starv1.NetworkList{}
-	err := c.List(ctx, nl)
-	if err != nil {
-		log.Error(err, "Failed to list all Networks in any namespace")
-		return &ctrl.Result{}, err
-	}
-
-	for _, net := range nl.Items {
-		res, err := commonNetDevReconcile(c, ctx, req, net)
-		if res != nil {
-			return res, err
-		}
-	}
-
-	return nil, nil
-}
-
-func commonNetDevReconcile(c client.Client, ctx context.Context, req ctrl.Request, net starv1.Network) (*ctrl.Result, error) {
-	devs, res, err := reconcileDevices(c, ctx, req, net)
-	if res != nil {
-		return res, err
-	}
-
-	res, err = reconcileNetworkStatusDevices(c, ctx, req, net, devs)
-	if res != nil {
-		return res, err
-	}
-
-	for _, dev := range devs {
-		res, err = reconcileDeviceSecret(c, ctx, req, dev, net)
-		if res != nil {
-			return res, err
-		}
-	}
-
-	return nil, nil
-}
-
-// Reconcile Devices
-func reconcileDevices(c client.Client, ctx context.Context, req ctrl.Request, net starv1.Network) (devs []starv1.Device, res *ctrl.Result, err error) {
+// Reconcile Devices that belongs to specific Network.
+func reconcileNetworkDevices(c client.Client, ctx context.Context, req ctrl.Request, net starv1.Network) (devs []starv1.Device, res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
 	dl := &starv1.DeviceList{}
@@ -224,7 +183,7 @@ func reconcileDeviceSecret(c client.Client, ctx context.Context, req ctrl.Reques
 	return
 }
 
-// Generate Secret.
+// Generate Device Secret.
 func deviceSecret(c client.Client, dev starv1.Device, net starv1.Network, srvPub wireguard.PublicKey, pk wireguard.PrivateKey, psk wireguard.PresharedKey) (*corev1.Secret, error) {
 	ls := labelsForDevice(dev.Name)
 
@@ -250,7 +209,7 @@ func deviceSecret(c client.Client, dev starv1.Device, net starv1.Network, srvPub
 	return sec, nil
 }
 
-// Generate Secret.
+// Generate Device Config file content.
 func deviceConf(dev starv1.Device, net starv1.Network, srvPub wireguard.PublicKey, pk wireguard.PrivateKey, psk wireguard.PresharedKey) (string, error) {
 	var as wireguard.IPAddresses
 	for i, ip := range dev.Spec.IPs {
@@ -286,6 +245,7 @@ func deviceConf(dev starv1.Device, net starv1.Network, srvPub wireguard.PublicKe
 	})
 }
 
+// Reconcile Network Status Devices.
 func reconcileNetworkStatusDevices(c client.Client, ctx context.Context, req ctrl.Request, net starv1.Network, devs []starv1.Device) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
