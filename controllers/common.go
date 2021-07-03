@@ -46,33 +46,125 @@ func reconcileNetworkDevices(c client.Client, ctx context.Context, req ctrl.Requ
 	return
 }
 
-// Reconcile Secret for general purpose.
-func reconcileDeviceSecret(c client.Client, ctx context.Context, req ctrl.Request, dev starv1.Device, net starv1.Network) (res *ctrl.Result, err error) {
+// Reconcile Device public keys.
+func reconcileDevicePublicKeys(c client.Client, ctx context.Context, req ctrl.Request, devs []starv1.Device) (devPubs *[]wireguard.PublicKey, res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
-	// Get server public key from Network Status
+	var pubs []wireguard.PublicKey
+	for _, dev := range devs {
+		var pub wireguard.PublicKey
+		pub, res, err = reconcileDevicePublicKey(ctx, req, dev)
+		if res != nil || err != nil {
+			return
+		}
+		if len(pub) == 0 {
+			log.Info("Not found Device public key", "Device.Namespace", dev.Namespace, "Deviec.Name", dev.Name)
+			return
+		}
+		pubs = append(pubs, pub)
+	}
+	devPubs = &pubs
+	return
+}
+
+// Reconcile Device private keys.
+func reconcileDevicePrivateKeys(c client.Client, ctx context.Context, req ctrl.Request, devs []starv1.Device) (devPKs *[]wireguard.PrivateKey, res *ctrl.Result, err error) {
+	log := log.FromContext(ctx)
+
+	var pks []wireguard.PrivateKey
+	for _, dev := range devs {
+		var pk wireguard.PrivateKey
+		pk, res, err = reconcileDeviceSecret(c, ctx, req, dev, false)
+		if res != nil || err != nil {
+			return
+		}
+		if len(pk) == 0 {
+			log.Info("Not found Device private key", "Device.Namespace", dev.Namespace, "Deviec.Name", dev.Name)
+			return
+		}
+		pks = append(pks, pk)
+	}
+	devPKs = &pks
+	return
+}
+
+// Reconcile Device preshared keys.
+func reconcileDevicePresharedKeys(c client.Client, ctx context.Context, req ctrl.Request, devs []starv1.Device) (devPSKs *[]wireguard.PresharedKey, res *ctrl.Result, err error) {
+	log := log.FromContext(ctx)
+
+	var psks []wireguard.PresharedKey
+	for _, dev := range devs {
+		var pk wireguard.PresharedKey
+		pk, res, err = reconcileDeviceSecretPSK(c, ctx, req, dev, false)
+		if res != nil || err != nil {
+			return
+		}
+		if len(pk) == 0 {
+			log.Info("Not found Device preshared key", "Device.Namespace", dev.Namespace, "Deviec.Name", dev.Name)
+			return
+		}
+		psks = append(psks, pk)
+	}
+	devPSKs = &psks
+	return
+}
+
+// Reconcile Network public key.
+func reconcileNetworkPublicKey(ctx context.Context, req ctrl.Request, net starv1.Network) (srvPub wireguard.PublicKey, res *ctrl.Result, err error) {
+	log := log.FromContext(ctx)
+
+	// Get server public key from Network
 	var spkb []byte
-	spkb, err = base64.StdEncoding.DecodeString(net.Status.ServerPublicKey)
+	spkb, err = base64.StdEncoding.DecodeString(net.ServerPublicKey)
 	if err != nil {
-		log.Error(err, "Failed to decode public key from network status as base64")
+		log.Error(err, "Failed to decode public key from Network as base64")
 		res = &ctrl.Result{}
 		return
 	} else if len(spkb) == 0 {
-		log.Info("Not found public key in Network Status. Requeue and wait for the conditions to be met", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+		log.Info("Not found public key in Network. Skipped the reconciliation of Network public key", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+		return
+	} else if len(spkb) != wireguard.PublicKeySize {
+		err = fmt.Errorf("length of public key is %d while expecting %d", len(spkb), wireguard.PublicKeySize)
+		log.Error(err, "Failed to get public key from Network")
+		res = &ctrl.Result{}
+		return
+	}
+	copy(srvPub[:], spkb)
+	return
+}
+
+// Reconcile Device public key.
+func reconcileDevicePublicKey(ctx context.Context, req ctrl.Request, dev starv1.Device) (srvPub wireguard.PublicKey, res *ctrl.Result, err error) {
+	log := log.FromContext(ctx)
+
+	// Get server public key from Device Status
+	var spkb []byte
+	spkb, err = base64.StdEncoding.DecodeString(dev.PublicKey)
+	if err != nil {
+		log.Error(err, "Failed to decode public key from Device Status as base64")
+		res = &ctrl.Result{}
+		return
+	} else if len(spkb) == 0 {
+		log.Info("Not found public key in Device. Skipped the reconciliation of Device public key", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
 		res = &ctrl.Result{Requeue: true}
 		return
 	} else if len(spkb) != wireguard.PublicKeySize {
 		err = fmt.Errorf("length of public key is %d while expecting %d", len(spkb), wireguard.PublicKeySize)
-		log.Error(err, "Failed to get public key from network status")
+		log.Error(err, "Failed to get public key from Device Status")
 		res = &ctrl.Result{}
 		return
 	}
-	var spk wireguard.PublicKey
-	copy(spk[:], spkb)
+	copy(srvPub[:], spkb)
+	return
+}
 
-	ns := dev.SecretRef.Namespace
-	if ns == "" {
-		ns = dev.Namespace
+// Reconcile Device Secret for general purpose.
+func reconcileDeviceSecret(c client.Client, ctx context.Context, req ctrl.Request, dev starv1.Device, allowUpdates bool) (pk wireguard.PrivateKey, res *ctrl.Result, err error) {
+	log := log.FromContext(ctx)
+
+	ns := dev.Namespace
+	if dev.SecretRef.Namespace != "" {
+		ns = dev.SecretRef.Namespace
 	}
 
 	sec := &corev1.Secret{}
@@ -80,34 +172,22 @@ func reconcileDeviceSecret(c client.Client, ctx context.Context, req ctrl.Reques
 	if err != nil && errors.IsNotFound(err) {
 		err = nil
 
-		var ppk wireguard.PrivateKey
-		ppk, err = wireguard.NewPrivateKey()
-		if err != nil {
-			log.Error(err, "Failed to create new Secret")
-			res = &ctrl.Result{}
+		if !allowUpdates {
+			log.Error(err, "Device Secret for private key is not found and not allowed to update. Skipped the reconciliation of Device Secret", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
 			return
 		}
 
-		var sspk wireguard.PrivateKey
-		sspk, err = wireguard.NewPrivateKey()
+		pk, err = wireguard.NewPrivateKey()
 		if err != nil {
-			log.Error(err, "Failed to create new Secret")
-			res = &ctrl.Result{}
-			return
-		}
-
-		var ss wireguard.PresharedKey
-		ss, err = sspk.SharedSecret(sspk.PublicKey())
-		if err != nil {
-			log.Error(err, "Failed to create new Secret")
+			log.Error(err, "Failed to create new Secret", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
 			res = &ctrl.Result{}
 			return
 		}
 
 		var sec *corev1.Secret
-		sec, err = deviceSecret(c, dev, net, spk, ppk, ss)
+		sec, err = deviceSecret(c, dev, pk)
 		if err != nil {
-			log.Error(err, "Failed to create new Secret")
+			log.Error(err, "Failed to create new Secret", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
 			res = &ctrl.Result{}
 			return
 		}
@@ -129,9 +209,9 @@ func reconcileDeviceSecret(c client.Client, ctx context.Context, req ctrl.Reques
 
 	// Private key
 	devPrivate := sec.Data[devPrivateKeySecretKey]
-	var pk wireguard.PrivateKey
 	if len(devPrivate) == 0 {
 		log.Info("Skipped parsing private key because not present", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+		return
 	} else if len(devPrivate) != wireguard.PrivateKeySize {
 		err = fmt.Errorf("length of private key in Secret is %d while expecting length %d", len(devPrivate), wireguard.PrivateKeySize)
 		log.Error(err, "Failed to get private key", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
@@ -140,26 +220,132 @@ func reconcileDeviceSecret(c client.Client, ctx context.Context, req ctrl.Reques
 	} else {
 		copy(pk[:], devPrivate)
 	}
+	return
+}
+
+// Reconcile Device Secret for preshared key.
+func reconcileDeviceSecretPSK(c client.Client, ctx context.Context, req ctrl.Request, dev starv1.Device, allowUpdates bool) (psk wireguard.PresharedKey, res *ctrl.Result, err error) {
+	log := log.FromContext(ctx)
+
+	ns := dev.Namespace
+	if dev.SecretPSKRef.Namespace != "" {
+		ns = dev.SecretPSKRef.Namespace
+	}
+
+	sec := &corev1.Secret{}
+	err = c.Get(ctx, types.NamespacedName{Name: dev.SecretPSKRef.Name, Namespace: ns}, sec)
+	if err != nil && errors.IsNotFound(err) {
+		err = nil
+
+		if !allowUpdates {
+			log.Info("Device Secret for preshared key is not found and not allowed to update. Skipped the reconciliation of Device Secret", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
+			return
+		}
+
+		var sspk wireguard.PrivateKey
+		sspk, err = wireguard.NewPrivateKey()
+		if err != nil {
+			log.Error(err, "Failed to create new Secret for preshared key")
+			res = &ctrl.Result{}
+			return
+		}
+
+		psk, err = sspk.SharedSecret(sspk.PublicKey())
+		if err != nil {
+			log.Error(err, "Failed to create new Secret for preshared key")
+			res = &ctrl.Result{}
+			return
+		}
+
+		var sec *corev1.Secret
+		sec, err = deviceSecretPSK(c, dev, psk)
+		if err != nil {
+			log.Error(err, "Failed to create new Secret for preshared key")
+			res = &ctrl.Result{}
+			return
+		}
+		log.Info("Creating a new Secret for preshared key", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+
+		err = c.Create(ctx, sec)
+		if err != nil {
+			log.Error(err, "Failed to create new Secret for preshared key", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+			res = &ctrl.Result{}
+			return
+		}
+		res = &ctrl.Result{RequeueAfter: 5 * time.Second}
+		return
+	} else if err != nil {
+		log.Error(err, "Failed to get Secret for preshared key")
+		res = &ctrl.Result{}
+		return
+	}
 
 	// Preshared key
 	devPreshared := sec.Data[devPresharedKeySecretKey]
-	var psk wireguard.PresharedKey
 	if len(devPreshared) == 0 {
 		log.Info("Skipped parsing preshared key because not present", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
-		res = &ctrl.Result{Requeue: true}
 		return
 	} else if len(devPreshared) != wireguard.PresharedKeySize {
-		err = fmt.Errorf("length of preshared key in Secret is %d while expecting length %d", len(devPreshared), wireguard.PresharedKeySize)
+		err = fmt.Errorf("length of preshared key in Secret for preshared key is %d while expecting length %d", len(devPreshared), wireguard.PresharedKeySize)
 		log.Error(err, "Failed to get preshared key", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
 		res = &ctrl.Result{}
 		return
 	} else {
 		copy(psk[:], devPreshared)
 	}
+	return
+}
+
+// Reconcile Device Secret for WireGuard config file content.
+func reconcileDeviceSecretConfig(c client.Client, ctx context.Context, req ctrl.Request, dev starv1.Device, net starv1.Network, srvPub wireguard.PublicKey, pk wireguard.PrivateKey, psk wireguard.PresharedKey) (res *ctrl.Result, err error) {
+	log := log.FromContext(ctx)
+
+	if len(pk) == 0 {
+		log.Info("Device Private Key is not present. Skipped checking Secret for Device WireGuard config file content", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
+		return
+	}
+
+	if len(psk) == 0 {
+		log.Info("Device preshared key is not present. Skipped checking Secret for Device WireGuard config file content", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
+		return
+	}
+
+	ns := dev.Namespace
+	if dev.SecretConfigRef.Namespace != "" {
+		ns = dev.SecretConfigRef.Namespace
+	}
+
+	sec := &corev1.Secret{}
+	err = c.Get(ctx, types.NamespacedName{Name: dev.SecretConfigRef.Name, Namespace: ns}, sec)
+	if err != nil && errors.IsNotFound(err) {
+		err = nil
+
+		var sec *corev1.Secret
+		sec, err = deviceSecretConfig(c, dev, net, srvPub, pk, psk)
+		if err != nil {
+			log.Error(err, "Failed to create new Secret for Device WireGuard config file content")
+			res = &ctrl.Result{}
+			return
+		}
+		log.Info("Creating a new Secret for Device WireGuard config file content", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+
+		err = c.Create(ctx, sec)
+		if err != nil {
+			log.Error(err, "Failed to create new Secret for Device WireGuard config file content", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+			res = &ctrl.Result{}
+			return
+		}
+		res = &ctrl.Result{RequeueAfter: 5 * time.Second}
+		return
+	} else if err != nil {
+		log.Error(err, "Failed to get Secret for Device WireGuard config file content")
+		res = &ctrl.Result{}
+		return
+	}
 
 	// Check whether the Secret data is desired
 	var ds string
-	ds, err = deviceConf(dev, net, spk, pk, psk)
+	ds, err = deviceConf(dev, net, srvPub, pk, psk)
 	desired := []byte(ds)
 	if err != nil {
 		log.Error(err, "Failed to get desired Device WireGuard Quick Config")
@@ -168,23 +354,70 @@ func reconcileDeviceSecret(c client.Client, ctx context.Context, req ctrl.Reques
 	}
 	conf := sec.Data[devConfSecretKey]
 	if !bytes.Equal(conf, desired) {
-		log.Info("Updating Secret Device Config", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+		log.Info("Updating Secret for Device WireGuard config file content", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
 		sec.Data[devConfSecretKey] = desired
 		err = c.Update(ctx, sec)
 		if err != nil {
-			log.Error(err, "Failed to patch Secret Device Config", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+			log.Error(err, "Failed to patch Secret for Device WireGuard config file content", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
 			res = &ctrl.Result{}
 			return
 		}
 		res = &ctrl.Result{RequeueAfter: time.Second}
 		return
 	}
-
 	return
 }
 
 // Generate Device Secret.
-func deviceSecret(c client.Client, dev starv1.Device, net starv1.Network, srvPub wireguard.PublicKey, pk wireguard.PrivateKey, psk wireguard.PresharedKey) (*corev1.Secret, error) {
+func deviceSecret(c client.Client, dev starv1.Device, pk wireguard.PrivateKey) (*corev1.Secret, error) {
+	ls := labelsForDevice(dev.Name)
+
+	ns := dev.Namespace
+	if dev.SecretRef.Namespace != "" {
+		ns = dev.SecretRef.Namespace
+	}
+
+	sec := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      dev.SecretRef.Name,
+			Namespace: ns,
+			Labels:    ls,
+		},
+		Data: map[string][]byte{
+			devPrivateKeySecretKey: pk[:],
+		},
+	}
+
+	ctrl.SetControllerReference(&dev, sec, c.Scheme())
+	return sec, nil
+}
+
+// Generate Device Secret for preshared key.
+func deviceSecretPSK(c client.Client, dev starv1.Device, psk wireguard.PresharedKey) (*corev1.Secret, error) {
+	ls := labelsForDevice(dev.Name)
+
+	ns := dev.Namespace
+	if dev.SecretPSKRef.Namespace != "" {
+		ns = dev.SecretPSKRef.Namespace
+	}
+
+	sec := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      dev.SecretPSKRef.Name,
+			Namespace: ns,
+			Labels:    ls,
+		},
+		Data: map[string][]byte{
+			devPresharedKeySecretKey: psk[:],
+		},
+	}
+
+	ctrl.SetControllerReference(&dev, sec, c.Scheme())
+	return sec, nil
+}
+
+// Generate Device Secret for Device WireGuard config file content.
+func deviceSecretConfig(c client.Client, dev starv1.Device, net starv1.Network, srvPub wireguard.PublicKey, pk wireguard.PrivateKey, psk wireguard.PresharedKey) (*corev1.Secret, error) {
 	ls := labelsForDevice(dev.Name)
 
 	devConf, err := deviceConf(dev, net, srvPub, pk, psk)
@@ -192,16 +425,19 @@ func deviceSecret(c client.Client, dev starv1.Device, net starv1.Network, srvPub
 		return nil, err
 	}
 
+	ns := dev.Namespace
+	if dev.SecretConfigRef.Namespace != "" {
+		ns = dev.SecretConfigRef.Namespace
+	}
+
 	sec := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      dev.SecretRef.Name,
-			Namespace: dev.Namespace,
+			Name:      dev.SecretConfigRef.Name,
+			Namespace: ns,
 			Labels:    ls,
 		},
 		Data: map[string][]byte{
-			devPrivateKeySecretKey:   pk[:],
-			devPresharedKeySecretKey: psk[:],
-			devConfSecretKey:         []byte(devConf),
+			devConfSecretKey: []byte(devConf),
 		},
 	}
 

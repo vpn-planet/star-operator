@@ -74,10 +74,6 @@ type NetworkStatus struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	Devices int32 `json:"devices,omitempty"`
-
-	// Base64 encoded server WireGuard interface public key.
-	// Automatically set after the reconciliation.
-	ServerPublicKey string `json:"serverPublicKey,omitempty"`
 }
 
 //+kubebuilder:object:root=true
@@ -93,6 +89,10 @@ type Network struct {
 
 	SecretRef       corev1.SecretReference `json:"secretRef,omitempty"`
 	ConfigSecretRef LocalSecretReference   `json:"configSecretRef,omitempty"`
+
+	// Base64 encoded server WireGuard interface public key.
+	// Automatically set after the reconciliation.
+	ServerPublicKey string `json:"serverPublicKey,omitempty"`
 }
 
 //+kubebuilder:object:root=true

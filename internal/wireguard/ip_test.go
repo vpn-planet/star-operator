@@ -312,7 +312,7 @@ func TestParseIPPrefix(t *testing.T) {
 	}
 
 	for i, c := range cases {
-		ip, pre, err := parseIPPrefix(c.in)
+		ip, pre, err := ParseIPPrefix(c.in)
 		if !c.isErr {
 			if err != nil {
 				t.Errorf(

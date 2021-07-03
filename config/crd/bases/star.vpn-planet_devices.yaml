@@ -33,9 +33,39 @@ spec:
             type: string
           metadata:
             type: object
+          publicKey:
+            description: Base64 encoded device WireGuard interface public key. Automatically
+              set after the reconciliation.
+            type: string
+          secretConfigRef:
+            description: Secret Reference to store Device configuration content to
+              download for users.
+            properties:
+              name:
+                description: Name is unique within a namespace to reference a secret
+                  resource.
+                type: string
+              namespace:
+                description: Namespace defines the space within which the secret name
+                  must be unique.
+                type: string
+            type: object
+          secretPSKRef:
+            description: Secret Reference to store Device peer preshared key to share
+              with Network.
+            properties:
+              name:
+                description: Name is unique within a namespace to reference a secret
+                  resource.
+                type: string
+              namespace:
+                description: Namespace defines the space within which the secret name
+                  must be unique.
+                type: string
+            type: object
           secretRef:
-            description: SecretReference represents a Secret Reference. It has enough
-              information to retrieve secret in any namespace
+            description: Secret Reference to store Device private key that is not
+              supposed to be read by other resources.
             properties:
               name:
                 description: Name is unique within a namespace to reference a secret

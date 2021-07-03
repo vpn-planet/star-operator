@@ -55,6 +55,10 @@ spec:
                   must be unique.
                 type: string
             type: object
+          serverPublicKey:
+            description: Base64 encoded server WireGuard interface public key. Automatically
+              set after the reconciliation.
+            type: string
           spec:
             description: NetworkSpec defines the desired state of Network
             properties:
@@ -211,10 +215,6 @@ spec:
               devices:
                 format: int32
                 type: integer
-              serverPublicKey:
-                description: Base64 encoded server WireGuard interface public key.
-                  Automatically set after the reconciliation.
-                type: string
             type: object
         type: object
     served: true

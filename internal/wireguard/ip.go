@@ -15,7 +15,7 @@ const (
 	portMax = 65535
 )
 
-func parseIPPrefix(s string) (net.IP, uint8, error) {
+func ParseIPPrefix(s string) (net.IP, uint8, error) {
 	for i := 0; i < len(s); i++ {
 		if s[i] == '/' {
 			ip := ParseIP(s[:i])
@@ -68,7 +68,7 @@ func (r IPAddress) String() string {
 }
 
 func ParseIPAddress(s string) (IPAddress, error) {
-	ip, pre, err := parseIPPrefix(s)
+	ip, pre, err := ParseIPPrefix(s)
 	if err != nil {
 		return IPAddress{}, err
 	}
@@ -126,7 +126,7 @@ func ParseIP(s string) net.IP {
 }
 
 func ParseIPRange(s string) (IPRange, error) {
-	ip, pre, err := parseIPPrefix(s)
+	ip, pre, err := ParseIPPrefix(s)
 	if err != nil {
 		return IPRange{}, err
 	}

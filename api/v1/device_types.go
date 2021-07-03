@@ -60,7 +60,17 @@ type Device struct {
 	Spec   DeviceSpec   `json:"spec,omitempty"`
 	Status DeviceStatus `json:"status,omitempty"`
 
+	// Secret Reference to store Device private key that is not supposed to be read by
+	// other resources.
 	SecretRef corev1.SecretReference `json:"secretRef,omitempty"`
+	// Secret Reference to store Device peer preshared key to share with Network.
+	SecretPSKRef corev1.SecretReference `json:"secretPSKRef,omitempty"`
+	// Secret Reference to store Device configuration content to download for users.
+	SecretConfigRef corev1.SecretReference `json:"secretConfigRef,omitempty"`
+
+	// Base64 encoded device WireGuard interface public key.
+	// Automatically set after the reconciliation.
+	PublicKey string `json:"publicKey,omitempty"`
 }
 
 //+kubebuilder:object:root=true

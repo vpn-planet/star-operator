@@ -17,6 +17,7 @@ limitations under the License.
 package controllers
 
 import (
+	"encoding/base64"
 	"net"
 
 	corev1 "k8s.io/api/core/v1"
@@ -92,6 +93,43 @@ func (r *DeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		panic(errReturnWithoutResult)
 	}
 
+	res, err = r.reconcileSecretPSKReference(ctx, req, dev)
+	if res != nil {
+		return *res, err
+	} else if err != nil {
+		panic(errReturnWithoutResult)
+	}
+
+	res, err = r.reconcileSecretConfigReference(ctx, req, dev)
+	if res != nil {
+		return *res, err
+	} else if err != nil {
+		panic(errReturnWithoutResult)
+	}
+
+	var pk wireguard.PrivateKey
+	pk, res, err = reconcileDeviceSecret(r.Client, ctx, req, *dev, true)
+	if res != nil {
+		return *res, err
+	} else if err != nil {
+		panic(errReturnWithoutResult)
+	}
+
+	var psk wireguard.PresharedKey
+	psk, res, err = reconcileDeviceSecretPSK(r.Client, ctx, req, *dev, true)
+	if res != nil {
+		return *res, err
+	} else if err != nil {
+		panic(errReturnWithoutResult)
+	}
+
+	res, err = r.reconcilePubkey(ctx, req, dev, pk)
+	if res != nil {
+		return *res, err
+	} else if err != nil {
+		panic(errReturnWithoutResult)
+	}
+
 	var net *starv1.Network
 	net, res, err = r.reconcileNetwork(ctx, req, dev)
 	if res != nil {
@@ -100,7 +138,15 @@ func (r *DeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		panic(errReturnWithoutResult)
 	}
 
-	res, err = reconcileDeviceSecret(r.Client, ctx, req, *dev, *net)
+	var srvPub wireguard.PublicKey
+	srvPub, res, err = reconcileNetworkPublicKey(ctx, req, *net)
+	if res != nil {
+		return *res, err
+	} else if err != nil {
+		panic(errReturnWithoutResult)
+	}
+
+	res, err = r.reconcileDeviceSecretConfig(ctx, req, *dev, *net, srvPub, pk, psk)
 	if res != nil {
 		return *res, err
 	} else if err != nil {
@@ -162,7 +208,104 @@ func genDeviceSecretName(n string) string {
 	return names.SimpleNameGenerator.GenerateName(n + "-device-")
 }
 
-// 3. Reconcile Network.
+// 3. Reconcile Device Secret Reference for PSK.
+func (r *DeviceReconciler) reconcileSecretPSKReference(ctx context.Context, req ctrl.Request, dev *starv1.Device) (res *ctrl.Result, err error) {
+	log := log.FromContext(ctx)
+
+	if dev.SecretPSKRef == (corev1.SecretReference{}) {
+		log.Info("Device SecretPSKRef not set. Patching Device SecretPSKRef", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
+		patch := &unstructured.Unstructured{}
+		patch.SetGroupVersionKind(dev.GroupVersionKind())
+		patch.SetNamespace(dev.Namespace)
+		patch.SetName(dev.Name)
+		patch.UnstructuredContent()["secretPSKRef"] = map[string]interface{}{
+			"name": genDeviceSecretPSKName(dev.Name),
+		}
+		err = r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
+			FieldManager: "secret_psk_ref",
+		})
+		if err != nil {
+			log.Error(err, "Failed to patch SecretPSKRef", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
+			res = &ctrl.Result{}
+			return
+		}
+		res = &ctrl.Result{Requeue: true}
+		return
+	}
+	return
+}
+
+// 3.a. Generate Secret name for preshared key.
+func genDeviceSecretPSKName(n string) string {
+	return names.SimpleNameGenerator.GenerateName(n + "-device-psk-")
+}
+
+// 4. Reconcile Device Secret Reference for Config content.
+func (r *DeviceReconciler) reconcileSecretConfigReference(ctx context.Context, req ctrl.Request, dev *starv1.Device) (res *ctrl.Result, err error) {
+	log := log.FromContext(ctx)
+
+	if dev.SecretConfigRef == (corev1.SecretReference{}) {
+		log.Info("Device SecretConfigRef not set. Patching Device SecretConfigRef", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
+		patch := &unstructured.Unstructured{}
+		patch.SetGroupVersionKind(dev.GroupVersionKind())
+		patch.SetNamespace(dev.Namespace)
+		patch.SetName(dev.Name)
+		patch.UnstructuredContent()["secretConfigRef"] = map[string]interface{}{
+			"name": genDeviceSecretConfigName(dev.Name),
+		}
+		err = r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
+			FieldManager: "secret_config_ref",
+		})
+		if err != nil {
+			log.Error(err, "Failed to patch SecretConfigRef", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
+			res = &ctrl.Result{}
+			return
+		}
+		res = &ctrl.Result{Requeue: true}
+		return
+	}
+	return
+}
+
+// 4.a. Generate Secret name for Device WireGuard config file content.
+func genDeviceSecretConfigName(n string) string {
+	return names.SimpleNameGenerator.GenerateName(n + "-device-config-")
+}
+
+// 5. Reconcile Device public key.
+func (r *DeviceReconciler) reconcilePubkey(ctx context.Context, req ctrl.Request, dev *starv1.Device, pk wireguard.PrivateKey) (res *ctrl.Result, err error) {
+	log := log.FromContext(ctx)
+
+	if len(pk) == 0 {
+		log.Info("Private key is not set. Skipped checking Device public key", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
+		return
+	}
+
+	pubkey := pk.PublicKey()
+	desired := base64.StdEncoding.EncodeToString(pubkey[:])
+
+	if dev.PublicKey != desired {
+		log.Info("Patching Device public key", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
+		patch := &unstructured.Unstructured{}
+		patch.SetGroupVersionKind(dev.GroupVersionKind())
+		patch.SetNamespace(dev.Namespace)
+		patch.SetName(dev.Name)
+		patch.UnstructuredContent()["publicKey"] = desired
+		err = r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
+			FieldManager: "public_key",
+		})
+		if err != nil {
+			log.Error(err, "Failed to patch Device public key", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
+			res = &ctrl.Result{}
+			return
+		}
+		res = &ctrl.Result{Requeue: true}
+		return
+	}
+	return
+}
+
+// 6. Reconcile Network.
 func (r *DeviceReconciler) reconcileNetwork(ctx context.Context, req ctrl.Request, dev *starv1.Device) (net *starv1.Network, res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
@@ -172,6 +315,22 @@ func (r *DeviceReconciler) reconcileNetwork(ctx context.Context, req ctrl.Reques
 	if err != nil {
 		log.Error(err, "Failed to get Network")
 		res = &ctrl.Result{Requeue: true}
+		return
+	}
+	return
+}
+
+// 7. Reconcile Secret for WireGuard config file content.
+func (r *DeviceReconciler) reconcileDeviceSecretConfig(ctx context.Context, req ctrl.Request, dev starv1.Device, net starv1.Network, srvPub wireguard.PublicKey, pk wireguard.PrivateKey, psk wireguard.PresharedKey) (res *ctrl.Result, err error) {
+	log := log.FromContext(ctx)
+
+	if len(srvPub) == 0 {
+		log.Info("Not found public key in Network. Skipped the reconciliation of Device Secret for WireGuard config file content", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+		return
+	}
+
+	res, err = reconcileDeviceSecretConfig(r.Client, ctx, req, dev, net, srvPub, pk, psk)
+	if res != nil || err != nil {
 		return
 	}
 	return

@@ -129,14 +129,45 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		panic(errReturnWithoutResult)
 	}
 
-	res, err = r.reconcileStatusPubkey(ctx, req, net, pk)
+	res, err = r.reconcilePubkey(ctx, req, net, pk)
 	if res != nil {
 		return *res, err
 	} else if err != nil {
 		panic(errReturnWithoutResult)
 	}
 
-	res, err = r.reconcileSecretConfig(ctx, req, net, pk)
+	devs, res, err := reconcileNetworkDevices(r.Client, ctx, req, *net)
+	if res != nil {
+		return *res, err
+	} else if err != nil {
+		panic(errReturnWithoutResult)
+	}
+
+	var devPubs *[]wireguard.PublicKey
+	devPubs, res, err = reconcileDevicePublicKeys(r.Client, ctx, req, devs)
+	if res != nil {
+		return *res, err
+	} else if err != nil {
+		panic(errReturnWithoutResult)
+	}
+
+	var devPKs *[]wireguard.PrivateKey
+	devPKs, res, err = reconcileDevicePrivateKeys(r.Client, ctx, req, devs)
+	if res != nil {
+		return *res, err
+	} else if err != nil {
+		panic(errReturnWithoutResult)
+	}
+
+	var devPSKs *[]wireguard.PresharedKey
+	devPSKs, res, err = reconcileDevicePresharedKeys(r.Client, ctx, req, devs)
+	if res != nil {
+		return *res, err
+	} else if err != nil {
+		panic(errReturnWithoutResult)
+	}
+
+	res, err = r.reconcileSecretConfig(ctx, req, net, pk, devs, devPubs, devPSKs)
 	if res != nil {
 		return *res, err
 	} else if err != nil {
@@ -158,13 +189,6 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		panic(errReturnWithoutResult)
 	}
 
-	devs, res, err := reconcileNetworkDevices(r.Client, ctx, req, *net)
-	if res != nil {
-		return *res, err
-	} else if err != nil {
-		panic(errReturnWithoutResult)
-	}
-
 	res, err = reconcileNetworkStatusDevices(r.Client, ctx, req, *net, devs)
 	if res != nil {
 		return *res, err
@@ -172,13 +196,19 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		panic(errReturnWithoutResult)
 	}
 
-	for _, dev := range devs {
-		res, err = reconcileDeviceSecret(r.Client, ctx, req, dev, *net)
-		if res != nil {
-			return *res, err
-		} else if err != nil {
-			panic(errReturnWithoutResult)
-		}
+	var srvPub wireguard.PublicKey
+	srvPub, res, err = reconcileNetworkPublicKey(ctx, req, *net)
+	if res != nil {
+		return *res, err
+	} else if err != nil {
+		panic(errReturnWithoutResult)
+	}
+
+	res, err = r.reconcileDeviceSecretsConfig(ctx, req, *net, srvPub, devs, devPKs, devPSKs)
+	if res != nil {
+		return *res, err
+	} else if err != nil {
+		panic(errReturnWithoutResult)
 	}
 
 	return ctrl.Result{}, nil
@@ -309,6 +339,7 @@ func (r *NetworkReconciler) reconcileSecret(ctx context.Context, req ctrl.Reques
 	srvPriv := sec.Data[srvPrivateKeySecretKey]
 	if len(srvPriv) == 0 {
 		log.Info("Skipped parsing private key because not present", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+		return
 	} else if len(srvPriv) != wireguard.PrivateKeySize {
 		err = fmt.Errorf("length of private key in Secret is %d while expecting length %d", len(srvPriv), wireguard.PrivateKeySize)
 		log.Error(err, "Failed to get server private key", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
@@ -349,32 +380,30 @@ func (r *NetworkReconciler) secret(net *starv1.Network) (*corev1.Secret, error) 
 	return sec, nil
 }
 
-// 5. Reconcile Secret for WireGuard Quick Config.
-func (r *NetworkReconciler) reconcileStatusPubkey(ctx context.Context, req ctrl.Request, net *starv1.Network, pk wireguard.PrivateKey) (res *ctrl.Result, err error) {
+// 5. Reconcile Server public key
+func (r *NetworkReconciler) reconcilePubkey(ctx context.Context, req ctrl.Request, net *starv1.Network, pk wireguard.PrivateKey) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
 	if len(pk) == 0 {
-		log.Info("Private key is not set. Skipping checking Network Status server public key", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+		log.Info("Private key is not set. Skipped checking Network server public key", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 		return
 	}
 
 	pubkey := pk.PublicKey()
 	desired := base64.StdEncoding.EncodeToString(pubkey[:])
 
-	if net.Status.ServerPublicKey != desired {
-		log.Info("Patching Network Status server public key", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+	if net.ServerPublicKey != desired {
+		log.Info("Patching Network server public key", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 		patch := &unstructured.Unstructured{}
 		patch.SetGroupVersionKind(net.GroupVersionKind())
 		patch.SetNamespace(net.Namespace)
 		patch.SetName(net.Name)
-		patch.UnstructuredContent()["status"] = map[string]interface{}{
-			"serverPublicKey": desired,
-		}
-		err = r.Status().Patch(ctx, patch, client.Apply, &client.PatchOptions{
-			FieldManager: "network_status_server_public_key",
+		patch.UnstructuredContent()["serverPublicKey"] = desired
+		err = r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
+			FieldManager: "server_public_key",
 		})
 		if err != nil {
-			log.Error(err, "Failed to patch Network Status server public key", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+			log.Error(err, "Failed to patch Network server public key", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 			res = &ctrl.Result{}
 			return
 		}
@@ -385,15 +414,25 @@ func (r *NetworkReconciler) reconcileStatusPubkey(ctx context.Context, req ctrl.
 }
 
 // 6. Reconcile Secret for WireGuard Quick Config.
-func (r *NetworkReconciler) reconcileSecretConfig(ctx context.Context, req ctrl.Request, net *starv1.Network, pk wireguard.PrivateKey) (res *ctrl.Result, err error) {
+func (r *NetworkReconciler) reconcileSecretConfig(ctx context.Context, req ctrl.Request, net *starv1.Network, srvPK wireguard.PrivateKey, devs []starv1.Device, devPubs *[]wireguard.PublicKey, devPSKs *[]wireguard.PresharedKey) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
+
+	if devPubs == nil {
+		log.Info("Not found all necessary public keys in Device belonging to Network. Skipped the reconciliation of Secret for Network WireGuard Quick Config", net.Namespace, "Network.Name", net.Name)
+		return
+	}
+
+	if devPSKs == nil {
+		log.Info("Not found all necessary preshared keys in Device belonging to Network. Skipped the reconciliation of Network Secret for Network WireGuard Quick Config", net.Namespace, "Network.Name", net.Name)
+		return
+	}
 
 	sec := &corev1.Secret{}
 	err = r.Get(ctx, types.NamespacedName{Name: net.ConfigSecretRef.Name, Namespace: net.Namespace}, sec)
 	if err != nil && errors.IsNotFound(err) {
 		err = nil
 		var s *corev1.Secret
-		s, err = r.secretConf(net, pk)
+		s, err = r.secretConf(net, srvPK, devs, *devPubs, *devPSKs)
 		if err != nil {
 			log.Error(err, "Failed to create new Secret for WireGuard Quick Config")
 			res = &ctrl.Result{}
@@ -415,12 +454,12 @@ func (r *NetworkReconciler) reconcileSecretConfig(ctx context.Context, req ctrl.
 	}
 
 	wg0Conf := sec.Data[wg0ConfKey]
-	if len(pk) == 0 {
+	if len(srvPK) == 0 {
 		log.Info("Skipped checking updates for server WireGuard Quick Config because server private key is not present")
 		return
 	} else {
 		var wg0ConfDesired string
-		wg0ConfDesired, err = serverConf(pk, *net)
+		wg0ConfDesired, err = serverConf(srvPK, *net, devs, *devPubs, *devPSKs)
 		if err != nil {
 			log.Error(err, "Failed to construct a server config file content")
 			res = &ctrl.Result{}
@@ -438,8 +477,8 @@ func (r *NetworkReconciler) reconcileSecretConfig(ctx context.Context, req ctrl.
 }
 
 // 6.a. Generate Secret for WireGuard Quick Config.
-func (r *NetworkReconciler) secretConf(net *starv1.Network, priv wireguard.PrivateKey) (*corev1.Secret, error) {
-	srvConf, err := serverConf(priv, *net)
+func (r *NetworkReconciler) secretConf(net *starv1.Network, srvPK wireguard.PrivateKey, devs []starv1.Device, devPubs []wireguard.PublicKey, devPSKs []wireguard.PresharedKey) (*corev1.Secret, error) {
+	srvConf, err := serverConf(srvPK, *net, devs, devPubs, devPSKs)
 	if err != nil {
 		return nil, err
 	}
@@ -462,9 +501,32 @@ func (r *NetworkReconciler) secretConf(net *starv1.Network, priv wireguard.Priva
 }
 
 // 6.b. Generate server WireGuard Quick Config content.
-func serverConf(pk wireguard.PrivateKey, m starv1.Network) (string, error) {
+func serverConf(srvPK wireguard.PrivateKey, net starv1.Network, devs []starv1.Device, devPubs []wireguard.PublicKey, devPSKs []wireguard.PresharedKey) (string, error) {
+	var devConfs []wireguard.ServerConfDevice
+	for i, dev := range devs {
+		var rs []wireguard.IPRange
+		for i, s := range dev.Spec.IPs {
+			ip, _, err := wireguard.ParseIPPrefix(s)
+			if err != nil {
+				return "", fmt.Errorf("error in %d-th device ip %q: %s", i+1, s, err)
+			}
+			r, err := wireguard.NewIPRange(ip, uint8(len(ip)*8))
+			if err != nil {
+				panic(fmt.Errorf("unreachable error in %d-th device ip %q: %s", i+1, s, err))
+			}
+
+			rs = append(rs, r)
+		}
+
+		devConfs = append(devConfs, wireguard.ServerConfDevice{
+			DevicePublicKey:  devPubs[i],
+			PeerPresharedKey: devPSKs[i],
+			AllowedIPs:       rs,
+		})
+	}
+
 	var as wireguard.IPAddresses
-	for i, ip := range m.Spec.ServerIPs {
+	for i, ip := range net.Spec.ServerIPs {
 		a, err := wireguard.ParseIPAddress(ip)
 		if err != nil {
 			return "", fmt.Errorf("error in %d-th server ip %q: %s", i+1, ip, err)
@@ -473,13 +535,13 @@ func serverConf(pk wireguard.PrivateKey, m starv1.Network) (string, error) {
 	}
 
 	return wireguard.BuildSrvConf(wireguard.ServerConf{
-		IPv4Enabled:      m.Spec.IPv4Enabled,
-		IPv6Enabled:      m.Spec.IPv6Enabled,
+		IPv4Enabled:      net.Spec.IPv4Enabled,
+		IPv6Enabled:      net.Spec.IPv6Enabled,
 		ListenPort:       wgPort,
-		ServerPrivateKey: pk,
+		ServerPrivateKey: srvPK,
 		ServerAddress:    as,
 		// TODO: after creating Device controller
-		Devices: []wireguard.ServerConfDevice{},
+		Devices: devConfs,
 	})
 }
 
@@ -616,6 +678,36 @@ func (r *NetworkReconciler) reconcileDeploymentReplicas(ctx context.Context, req
 		}
 		res = &ctrl.Result{RequeueAfter: time.Minute}
 		return
+	}
+	return
+}
+
+// 9. Reconcile Device Secrets for WireGuard config file content.
+func (r *NetworkReconciler) reconcileDeviceSecretsConfig(ctx context.Context, req ctrl.Request, net starv1.Network, srvPub wireguard.PublicKey, devs []starv1.Device, devPKs *[]wireguard.PrivateKey, devPSKs *[]wireguard.PresharedKey) (res *ctrl.Result, err error) {
+	log := log.FromContext(ctx)
+
+	if len(srvPub) == 0 {
+		log.Info("Not found public key in Network. Skipped the reconciliation of Device Secrets for Network WireGuard Quick Config", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+		return
+	}
+
+	if devPKs == nil {
+		log.Info("Not found all necessary private keys in Device belonging to Network. Skipped the reconciliation of Device Secrets for Network WireGuard Quick Config", net.Namespace, "Network.Name", net.Name)
+		return
+	}
+
+	if devPSKs == nil {
+		log.Info("Not found all necessary preshared keys in Device belonging to Network. Skipped the reconciliation of Device Secrets for Network WireGuard Quick Config", net.Namespace, "Network.Name", net.Name)
+		return
+	}
+
+	for i, dev := range devs {
+		pk := (*devPKs)[i]
+		psk := (*devPSKs)[i]
+		res, err = reconcileDeviceSecretConfig(r.Client, ctx, req, dev, net, srvPub, pk, psk)
+		if res != nil || err != nil {
+			return
+		}
 	}
 	return
 }
