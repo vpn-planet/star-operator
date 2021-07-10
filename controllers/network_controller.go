@@ -20,6 +20,8 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"hash/fnv"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,6 +51,7 @@ const (
 	srvPrivateKeySecretKey = "server-private-key"
 	wgImgDefault           = "docker.io/vpnplanet/wireguard"
 	wgPort                 = 51820
+	updateAnnotation       = "star.vpn-planet/last-updated-digest"
 )
 
 var (
@@ -143,6 +146,13 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		panic(errReturnWithoutResult)
 	}
 
+	res, err = reconcileNetworkStatusDevices(r.Client, ctx, req, *net, devs)
+	if res != nil {
+		return *res, err
+	} else if err != nil {
+		panic(errReturnWithoutResult)
+	}
+
 	var devPubs *[]wireguard.PublicKey
 	devPubs, res, err = reconcileDevicePublicKeys(r.Client, ctx, req, devs)
 	if res != nil {
@@ -167,7 +177,8 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		panic(errReturnWithoutResult)
 	}
 
-	res, err = r.reconcileSecretConfig(ctx, req, net, pk, devs, devPubs, devPSKs)
+	var confDigest uint32
+	confDigest, res, err = r.reconcileSecretConfig(ctx, req, net, pk, devs, devPubs, devPSKs)
 	if res != nil {
 		return *res, err
 	} else if err != nil {
@@ -175,7 +186,14 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	var dep *appsv1.Deployment
-	dep, res, err = r.reconcileDeployment(ctx, req, net)
+	dep, res, err = r.reconcileDeployment(ctx, req, net, confDigest)
+	if res != nil {
+		return *res, err
+	} else if err != nil {
+		panic(errReturnWithoutResult)
+	}
+
+	res, err = r.reconcileDeploymentRestart(ctx, req, net, dep, confDigest)
 	if res != nil {
 		return *res, err
 	} else if err != nil {
@@ -183,13 +201,6 @@ func (r *NetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	res, err = r.reconcileDeploymentReplicas(ctx, req, net, dep)
-	if res != nil {
-		return *res, err
-	} else if err != nil {
-		panic(errReturnWithoutResult)
-	}
-
-	res, err = reconcileNetworkStatusDevices(r.Client, ctx, req, *net, devs)
 	if res != nil {
 		return *res, err
 	} else if err != nil {
@@ -247,12 +258,14 @@ func (r *NetworkReconciler) reconcileSecretReference(ctx context.Context, req ct
 		patch.UnstructuredContent()["secretRef"] = map[string]interface{}{
 			"name": genNetworkSecretName(net.Name),
 		}
+		force := true
 		err = r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
-			FieldManager: "secret_ref",
+			FieldManager: "star.vpn-planet/reconcile/network/secret-reference",
+			Force:        &force,
 		})
 
 		if err != nil {
-			log.Error(err, "Failed to patch Network SecretRef")
+			log.Error(err, "Failed to patch Network SecretRef", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 			res = &ctrl.Result{}
 			return
 		}
@@ -268,12 +281,12 @@ func genNetworkSecretName(n string) string {
 	return names.SimpleNameGenerator.GenerateName(n + "-server-")
 }
 
-// 3. Reconcile Network Secret Reference for WireGuard Quick Config.
+// 3. Reconcile Network Secret Config Reference for server WireGuard Quick Config.
 func (r *NetworkReconciler) reconcileSecretConfigReference(ctx context.Context, req ctrl.Request, net *starv1.Network) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
 	if net.ConfigSecretRef == (starv1.LocalSecretReference{}) {
-		log.Info("Network Config SecretRef not set. Patching Network Network Config SecretRef", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+		log.Info("Network Config SecretRef not set. Patching Network ConfigSecretRef", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 		patch := &unstructured.Unstructured{}
 		patch.SetGroupVersionKind(net.GroupVersionKind())
 		patch.SetNamespace(net.Namespace)
@@ -281,12 +294,14 @@ func (r *NetworkReconciler) reconcileSecretConfigReference(ctx context.Context, 
 		patch.UnstructuredContent()["configSecretRef"] = map[string]interface{}{
 			"name": genServerConfigSecretName(net.Name),
 		}
+		force := true
 		err = r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
-			FieldManager: "config_secret_ref",
+			FieldManager: "star.vpn-planet/reconcile/network/config-secret-reference",
+			Force:        &force,
 		})
 
 		if err != nil {
-			log.Error(err, "Failed to patch Network SecretRef for WireGuard Quick Config")
+			log.Error(err, "Failed to patch Network ConfigSecretRef", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 			res = &ctrl.Result{}
 			return
 		}
@@ -296,7 +311,7 @@ func (r *NetworkReconciler) reconcileSecretConfigReference(ctx context.Context, 
 	return
 }
 
-// 3.a. Generate Server Config Secret name.
+// 3.a. Generate server Config Secret name.
 func genServerConfigSecretName(n string) string {
 	return names.SimpleNameGenerator.GenerateName(n + "-server-wgconf-")
 }
@@ -317,32 +332,32 @@ func (r *NetworkReconciler) reconcileSecret(ctx context.Context, req ctrl.Reques
 		var s *corev1.Secret
 		s, err = r.secret(net)
 		if err != nil {
-			log.Error(err, "Failed to create new Secret")
+			log.Error(err, "Failed to create new Secret", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 			res = &ctrl.Result{}
 			return
 		}
-		log.Info("Creating a new Secret", "Secret.Namespace", s.Namespace, "Secret.Name", s.Name)
+		log.Info("Creating a new Secret", "Network.Namespace", net.Namespace, "Network.Name", net.Name, "Secret.Namespace", s.Namespace, "Secret.Name", s.Name)
 		err = r.Create(ctx, s)
 		if err != nil {
-			log.Error(err, "Failed to create new Secret", "Secret.Namespace", s.Namespace, "Secret.Name", s.Name)
+			log.Error(err, "Failed to create new Secret", "Network.Namespace", net.Namespace, "Network.Name", net.Name, "Secret.Namespace", s.Namespace, "Secret.Name", s.Name)
 			res = &ctrl.Result{}
 			return
 		}
-		res = &ctrl.Result{RequeueAfter: 5 * time.Second}
+		res = &ctrl.Result{Requeue: true}
 		return
 	} else if err != nil {
-		log.Error(err, "Failed to get Secret")
+		log.Error(err, "Failed to get Secret", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 		res = &ctrl.Result{}
 		return
 	}
 
 	srvPriv := sec.Data[srvPrivateKeySecretKey]
 	if len(srvPriv) == 0 {
-		log.Info("Skipped parsing private key because not present", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+		log.Info("Skipped parsing private key because not present", "Network.Namespace", net.Namespace, "Network.Name", net.Name, "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
 		return
 	} else if len(srvPriv) != wireguard.PrivateKeySize {
 		err = fmt.Errorf("length of private key in Secret is %d while expecting length %d", len(srvPriv), wireguard.PrivateKeySize)
-		log.Error(err, "Failed to get server private key", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+		log.Error(err, "Failed to get server private key", "Network.Namespace", net.Namespace, "Network.Name", net.Name, "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
 		res = &ctrl.Result{}
 		return
 	} else {
@@ -380,7 +395,7 @@ func (r *NetworkReconciler) secret(net *starv1.Network) (*corev1.Secret, error) 
 	return sec, nil
 }
 
-// 5. Reconcile Server public key
+// 5. Reconcile server public key
 func (r *NetworkReconciler) reconcilePubkey(ctx context.Context, req ctrl.Request, net *starv1.Network, pk wireguard.PrivateKey) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
@@ -399,8 +414,10 @@ func (r *NetworkReconciler) reconcilePubkey(ctx context.Context, req ctrl.Reques
 		patch.SetNamespace(net.Namespace)
 		patch.SetName(net.Name)
 		patch.UnstructuredContent()["serverPublicKey"] = desired
+		force := true
 		err = r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
-			FieldManager: "server_public_key",
+			FieldManager: "star.vpn-planet/reconcile/network/server-public-key",
+			Force:        &force,
 		})
 		if err != nil {
 			log.Error(err, "Failed to patch Network server public key", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
@@ -413,8 +430,8 @@ func (r *NetworkReconciler) reconcilePubkey(ctx context.Context, req ctrl.Reques
 	return
 }
 
-// 6. Reconcile Secret for WireGuard Quick Config.
-func (r *NetworkReconciler) reconcileSecretConfig(ctx context.Context, req ctrl.Request, net *starv1.Network, srvPK wireguard.PrivateKey, devs []starv1.Device, devPubs *[]wireguard.PublicKey, devPSKs *[]wireguard.PresharedKey) (res *ctrl.Result, err error) {
+// 6. Reconcile Secret for server WireGuard Quick Config.
+func (r *NetworkReconciler) reconcileSecretConfig(ctx context.Context, req ctrl.Request, net *starv1.Network, srvPK wireguard.PrivateKey, devs []starv1.Device, devPubs *[]wireguard.PublicKey, devPSKs *[]wireguard.PresharedKey) (confDigest uint32, res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
 	if devPubs == nil {
@@ -434,49 +451,66 @@ func (r *NetworkReconciler) reconcileSecretConfig(ctx context.Context, req ctrl.
 		var s *corev1.Secret
 		s, err = r.secretConf(net, srvPK, devs, *devPubs, *devPSKs)
 		if err != nil {
-			log.Error(err, "Failed to create new Secret for WireGuard Quick Config")
+			log.Error(err, "Failed to create new Secret for server WireGuard Quick Config")
 			res = &ctrl.Result{}
 			return
 		}
-		log.Info("Creating a new Secret for WireGuard Quick Config", "Secret.Namespace", s.Namespace, "Secret.Name", s.Name)
+		log.Info("Creating a new Secret for server WireGuard Quick Config", "Network.Namespace", net.Namespace, "Network.Name", net.Name, "Secret.Namespace", s.Namespace, "Secret.Name", s.Name)
 		err = r.Create(ctx, s)
 		if err != nil {
-			log.Error(err, "Failed to create new Secret", "Secret.Namespace", s.Namespace, "Secret.Name", s.Name)
+			log.Error(err, "Failed to create new Secret", "Network.Namespace", net.Namespace, "Network.Name", net.Name, "Secret.Namespace", s.Namespace, "Secret.Name", s.Name)
 			res = &ctrl.Result{}
 			return
 		}
 		res = &ctrl.Result{Requeue: true}
 		return
 	} else if err != nil {
-		log.Error(err, "Failed to get Deployment")
+		log.Error(err, "Failed to get Deployment", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 		res = &ctrl.Result{}
 		return
 	}
 
 	wg0Conf := sec.Data[wg0ConfKey]
 	if len(srvPK) == 0 {
-		log.Info("Skipped checking updates for server WireGuard Quick Config because server private key is not present")
-		return
+		log.Info("Skipped checking updates for server WireGuard Quick Config because server private key is not present", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 	} else {
 		var wg0ConfDesired string
 		wg0ConfDesired, err = serverConf(srvPK, *net, devs, *devPubs, *devPSKs)
 		if err != nil {
-			log.Error(err, "Failed to construct a server config file content")
+			log.Error(err, "Failed to construct a server config file content", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 			res = &ctrl.Result{}
 			return
 		}
 		if !bytes.Equal(wg0Conf, []byte(wg0ConfDesired)) {
-			log.Info("Updating Secret for WireGuard Quick Config", "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
-			sec.Data[wg0ConfKey] = []byte(wg0ConfDesired)
-			r.Update(ctx, sec)
+			log.Info("Patching Secret for server WireGuard Quick Config", "Network.Namespace", net.Namespace, "Network.Name", net.Name, "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+			patch := &unstructured.Unstructured{}
+			patch.SetGroupVersionKind(sec.GroupVersionKind())
+			patch.SetNamespace(sec.Namespace)
+			patch.SetName(sec.Name)
+			patch.UnstructuredContent()["data"] = map[string]interface{}{
+				wg0ConfKey: []byte(wg0ConfDesired),
+			}
+			force := true
+			err = r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
+				FieldManager: "star.vpn-planet/reconcile/network/secret-config",
+				Force:        &force,
+			})
+			if err != nil {
+				log.Error(err, "Failed to patch Secret for server WireGuard Quick Config", "Network.Namespace", net.Namespace, "Network.Name", net.Name, "Secret.Namespace", sec.Namespace, "Secret.Name", sec.Name)
+				res = &ctrl.Result{}
+				return
+			}
 			res = &ctrl.Result{Requeue: true}
 			return
 		}
 	}
+	h := fnv.New32a()
+	h.Write(wg0Conf)
+	confDigest = h.Sum32()
 	return
 }
 
-// 6.a. Generate Secret for WireGuard Quick Config.
+// 6.a. Generate Secret for server WireGuard Quick Config.
 func (r *NetworkReconciler) secretConf(net *starv1.Network, srvPK wireguard.PrivateKey, devs []starv1.Device, devPubs []wireguard.PublicKey, devPSKs []wireguard.PresharedKey) (*corev1.Secret, error) {
 	srvConf, err := serverConf(srvPK, *net, devs, devPubs, devPSKs)
 	if err != nil {
@@ -540,32 +574,30 @@ func serverConf(srvPK wireguard.PrivateKey, net starv1.Network, devs []starv1.De
 		ListenPort:       wgPort,
 		ServerPrivateKey: srvPK,
 		ServerAddress:    as,
-		// TODO: after creating Device controller
-		Devices: devConfs,
+		Devices:          devConfs,
 	})
 }
 
 // 7. Reconcile Deployment.
-func (r *NetworkReconciler) reconcileDeployment(ctx context.Context, req ctrl.Request, net *starv1.Network) (dep *appsv1.Deployment, res *ctrl.Result, err error) {
+func (r *NetworkReconciler) reconcileDeployment(ctx context.Context, req ctrl.Request, net *starv1.Network, confDigest uint32) (dep *appsv1.Deployment, res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
 	dep = &appsv1.Deployment{}
 	err = r.Get(ctx, types.NamespacedName{Name: deploymentName(net.Name), Namespace: net.Namespace}, dep)
 	if err != nil && errors.IsNotFound(err) {
 		err = nil
-		d := r.deployment(net)
-		log.Info("Creating a new Deployment", "Deployment.Namespace", d.Namespace, "Deployment.Name", d.Name)
+		d := r.deployment(net, confDigest)
+		log.Info("Creating a new Deployment", "Network.Namespace", net.Namespace, "Network.Name", net.Name, "Deployment.Namespace", d.Namespace, "Deployment.Name", d.Name)
 		err = r.Create(ctx, d)
 		if err != nil {
-			log.Error(err, "Failed to create new Deployment", "Deployment.Namespace", d.Namespace, "Deployment.Name", d.Name)
+			log.Error(err, "Failed to create new Deployment", "Network.Namespace", net.Namespace, "Network.Name", net.Name, "Deployment.Namespace", d.Namespace, "Deployment.Name", d.Name)
 			res = &ctrl.Result{}
 			return
 		}
-		// Deployment created successfully - return and requeue
 		res = &ctrl.Result{Requeue: true}
 		return
 	} else if err != nil {
-		log.Error(err, "Failed to get Deployment")
+		log.Error(err, "Failed to get Deployment", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 		res = &ctrl.Result{}
 		return
 	}
@@ -573,7 +605,7 @@ func (r *NetworkReconciler) reconcileDeployment(ctx context.Context, req ctrl.Re
 }
 
 // 7.a. Generate Deployment.
-func (r *NetworkReconciler) deployment(net *starv1.Network) *appsv1.Deployment {
+func (r *NetworkReconciler) deployment(net *starv1.Network, confDigest uint32) *appsv1.Deployment {
 	ls := labelsForNetwork(net.Name)
 	replicas := *net.Spec.Replicas
 	privileged := true
@@ -584,6 +616,8 @@ func (r *NetworkReconciler) deployment(net *starv1.Network) *appsv1.Deployment {
 	}
 
 	var mode int32 = 0400
+
+	digest := strconv.FormatUint(uint64(confDigest), 10)
 
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -598,6 +632,9 @@ func (r *NetworkReconciler) deployment(net *starv1.Network) *appsv1.Deployment {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: ls,
+					Annotations: map[string]string{
+						updateAnnotation: digest,
+					},
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
@@ -655,12 +692,49 @@ func deploymentName(n string) string {
 	return n + "-server"
 }
 
-// 8. Reconcile Deployment Replicas.
+// 8. Reconcile Deployment Restart.
+// This triggers restart when configuration file has been changed.
+func (r *NetworkReconciler) reconcileDeploymentRestart(ctx context.Context, req ctrl.Request, net *starv1.Network, dep *appsv1.Deployment, confDigest uint32) (res *ctrl.Result, err error) {
+	log := log.FromContext(ctx)
+
+	desired := strconv.FormatUint(uint64(confDigest), 10)
+	if dep.Spec.Template.ObjectMeta.Annotations[updateAnnotation] != desired {
+		log.Info("Patching Network Deployment Annotations to restart deployment", "Network.Namespace", net.Namespace, "Network.Name", net.Name, "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
+		patch := &unstructured.Unstructured{}
+		patch.SetGroupVersionKind(dep.GroupVersionKind())
+		patch.SetNamespace(dep.Namespace)
+		patch.SetName(dep.Name)
+		patch.UnstructuredContent()["spec"] = map[string]interface{}{
+			"template": map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"annotations": map[string]interface{}{
+						updateAnnotation: desired,
+					},
+				},
+			},
+		}
+		force := true
+		err = r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
+			FieldManager: "star.vpn-planet/reconcile/network/deployment-restart",
+			Force:        &force,
+		})
+		if err != nil {
+			log.Error(err, "Failed to patch Network Deployment Annotations to restart deployment", "Network.Namespace", net.Namespace, "Network.Name", net.Name, "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
+			res = &ctrl.Result{}
+			return
+		}
+		res = &ctrl.Result{RequeueAfter: 10 * time.Second}
+		return
+	}
+	return
+}
+
+// 9. Reconcile Deployment Replicas.
 func (r *NetworkReconciler) reconcileDeploymentReplicas(ctx context.Context, req ctrl.Request, net *starv1.Network, dep *appsv1.Deployment) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
 	if *dep.Spec.Replicas != *net.Spec.Replicas {
-		log.Info("Patching Network Spec replicas", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+		log.Info("Patching Network Spec replicas", "Network.Namespace", net.Namespace, "Network.Name", net.Name, "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
 		patch := &unstructured.Unstructured{}
 		patch.SetGroupVersionKind(dep.GroupVersionKind())
 		patch.SetNamespace(dep.Namespace)
@@ -668,21 +742,23 @@ func (r *NetworkReconciler) reconcileDeploymentReplicas(ctx context.Context, req
 		patch.UnstructuredContent()["spec"] = map[string]interface{}{
 			"replicas": *net.Spec.Replicas,
 		}
+		force := true
 		err = r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
-			FieldManager: "deployment_replicas",
+			FieldManager: "star.vpn-planet/reconcile/network/deployment-replicas",
+			Force:        &force,
 		})
 		if err != nil {
-			log.Error(err, "Failed to patch Deployment replicas", "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
+			log.Error(err, "Failed to patch Deployment replicas", "Network.Namespace", net.Namespace, "Network.Name", net.Name, "Deployment.Namespace", dep.Namespace, "Deployment.Name", dep.Name)
 			res = &ctrl.Result{}
 			return
 		}
-		res = &ctrl.Result{RequeueAfter: time.Minute}
+		res = &ctrl.Result{Requeue: true}
 		return
 	}
 	return
 }
 
-// 9. Reconcile Device Secrets for WireGuard config file content.
+// 10. Reconcile Device Secrets for Device WireGuard config file content.
 func (r *NetworkReconciler) reconcileDeviceSecretsConfig(ctx context.Context, req ctrl.Request, net starv1.Network, srvPub wireguard.PublicKey, devs []starv1.Device, devPKs *[]wireguard.PrivateKey, devPSKs *[]wireguard.PresharedKey) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 

@@ -134,6 +134,8 @@ type devMobileconfigRecipient struct {
 	PayloadDisplayName string
 	// Should be a WireGuard configuration in wg-quick(8) / wg(8) format. The keys 'FwMark', 'Table', 'PreUp', 'PostUp', 'PreDown', 'PostDown' and 'SaveConfig' are not supported.
 	WgQuickConfig string
+	// The name of the WireGuard tunnel. This name shall be used to represent the tunnel in the WireGuard app, and in the System UI for VPNs (Settings > VPN on iOS, System Preferences > Network on macOS).
+	UserDefinedName string
 	// A non-empty string. This string is displayed as the server name in the System UI for VPNs (Settings > VPN on iOS, System Preferences > Network on macOS).
 	RemoteAddress string
 	// Should be set as the bundle identifier of the WireGuard app.
@@ -153,20 +155,29 @@ type devMobileconfigRecipient struct {
 func buildSrvConf(r srvConfRecipient) string {
 	t := template.Must(template.New("server.conf.tmpl").Parse(srvConfTmpl))
 	buf := new(bytes.Buffer)
-	t.Execute(buf, r)
+	err := t.Execute(buf, r)
+	if err != nil {
+		panic(err)
+	}
 	return buf.String()
 }
 
 func buildDevConf(r devConfRecipient) string {
 	t := template.Must(template.New("device.conf.tmpl").Parse(devConfTmpl))
 	buf := new(bytes.Buffer)
-	t.Execute(buf, r)
+	err := t.Execute(buf, r)
+	if err != nil {
+		panic(err)
+	}
 	return buf.String()
 }
 
 func buildDevMobileconfig(r devMobileconfigRecipient) string {
 	t := template.Must(template.New("device.mobileconfig.tmpl").Parse(devMobileconfigTmpl))
 	buf := new(bytes.Buffer)
-	t.Execute(buf, r)
+	err := t.Execute(buf, r)
+	if err != nil {
+		panic(err)
+	}
 	return buf.String()
 }

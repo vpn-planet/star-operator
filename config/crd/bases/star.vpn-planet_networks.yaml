@@ -195,6 +195,13 @@ spec:
                 type: boolean
               ipv6Enabled:
                 type: boolean
+              payloadDisplayName:
+                description: Name for mobileconfig PayloadDisplayName, the name of
+                  the configuration profile, visible when installing the profile
+                type: string
+              payloadOrganization:
+                description: Organization name for mobileconfig PayloadOrganization
+                type: string
               replicas:
                 description: 'Defaults to 1. More info: https://kubernetes.io/docs/concepts/workloads/controllers/replicationcontroller#what-is-a-replicationcontroller'
                 format: int32
@@ -204,6 +211,12 @@ spec:
                 items:
                   type: string
                 type: array
+              userDefinedName:
+                description: Name in mobileconfig UserDefinedName, the name of the
+                  WireGuard tunnel. This name shall be used to represent the tunnel
+                  in the WireGuard app, and in the System UI for VPNs (Settings >
+                  VPN on iOS, System Preferences > Network on macOS).
+                type: string
               wireguardImage:
                 description: WireGuard installed image source for server container
                   If omitted, docker.io/vpnplanet/wireguard:latest will be used

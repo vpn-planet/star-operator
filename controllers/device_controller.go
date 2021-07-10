@@ -93,14 +93,14 @@ func (r *DeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		panic(errReturnWithoutResult)
 	}
 
-	res, err = r.reconcileSecretPSKReference(ctx, req, dev)
+	res, err = r.reconcilePSKSecretReference(ctx, req, dev)
 	if res != nil {
 		return *res, err
 	} else if err != nil {
 		panic(errReturnWithoutResult)
 	}
 
-	res, err = r.reconcileSecretConfigReference(ctx, req, dev)
+	res, err = r.reconcileConfigSecretReference(ctx, req, dev)
 	if res != nil {
 		return *res, err
 	} else if err != nil {
@@ -189,8 +189,10 @@ func (r *DeviceReconciler) reconcileSecretReference(ctx context.Context, req ctr
 		patch.UnstructuredContent()["secretRef"] = map[string]interface{}{
 			"name": genDeviceSecretName(dev.Name),
 		}
+		force := true
 		err = r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
-			FieldManager: "secret_ref",
+			FieldManager: "star.vpn-planet/reconcile/device/secret-reference",
+			Force:        &force,
 		})
 		if err != nil {
 			log.Error(err, "Failed to patch SecretRef", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
@@ -209,23 +211,25 @@ func genDeviceSecretName(n string) string {
 }
 
 // 3. Reconcile Device Secret Reference for PSK.
-func (r *DeviceReconciler) reconcileSecretPSKReference(ctx context.Context, req ctrl.Request, dev *starv1.Device) (res *ctrl.Result, err error) {
+func (r *DeviceReconciler) reconcilePSKSecretReference(ctx context.Context, req ctrl.Request, dev *starv1.Device) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
-	if dev.SecretPSKRef == (corev1.SecretReference{}) {
-		log.Info("Device SecretPSKRef not set. Patching Device SecretPSKRef", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
+	if dev.PSKSecretRef == (corev1.SecretReference{}) {
+		log.Info("Device PSKSecretRef not set. Patching Device PSKSecretRef", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
 		patch := &unstructured.Unstructured{}
 		patch.SetGroupVersionKind(dev.GroupVersionKind())
 		patch.SetNamespace(dev.Namespace)
 		patch.SetName(dev.Name)
-		patch.UnstructuredContent()["secretPSKRef"] = map[string]interface{}{
+		patch.UnstructuredContent()["pskSecretRef"] = map[string]interface{}{
 			"name": genDeviceSecretPSKName(dev.Name),
 		}
+		force := true
 		err = r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
-			FieldManager: "secret_psk_ref",
+			FieldManager: "star.vpn-planet/reconcile/device/secret-psk-reference",
+			Force:        &force,
 		})
 		if err != nil {
-			log.Error(err, "Failed to patch SecretPSKRef", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
+			log.Error(err, "Failed to patch PSKSecretRef", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
 			res = &ctrl.Result{}
 			return
 		}
@@ -241,23 +245,25 @@ func genDeviceSecretPSKName(n string) string {
 }
 
 // 4. Reconcile Device Secret Reference for Config content.
-func (r *DeviceReconciler) reconcileSecretConfigReference(ctx context.Context, req ctrl.Request, dev *starv1.Device) (res *ctrl.Result, err error) {
+func (r *DeviceReconciler) reconcileConfigSecretReference(ctx context.Context, req ctrl.Request, dev *starv1.Device) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
-	if dev.SecretConfigRef == (corev1.SecretReference{}) {
-		log.Info("Device SecretConfigRef not set. Patching Device SecretConfigRef", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
+	if dev.ConfigSecretRef == (corev1.SecretReference{}) {
+		log.Info("Device ConfigSecretRef not set. Patching Device ConfigSecretRef", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
 		patch := &unstructured.Unstructured{}
 		patch.SetGroupVersionKind(dev.GroupVersionKind())
 		patch.SetNamespace(dev.Namespace)
 		patch.SetName(dev.Name)
-		patch.UnstructuredContent()["secretConfigRef"] = map[string]interface{}{
+		patch.UnstructuredContent()["configSecretRef"] = map[string]interface{}{
 			"name": genDeviceSecretConfigName(dev.Name),
 		}
+		force := true
 		err = r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
 			FieldManager: "secret_config_ref",
+			Force:        &force,
 		})
 		if err != nil {
-			log.Error(err, "Failed to patch SecretConfigRef", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
+			log.Error(err, "Failed to patch ConfigSecretRef", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
 			res = &ctrl.Result{}
 			return
 		}
@@ -291,8 +297,10 @@ func (r *DeviceReconciler) reconcilePubkey(ctx context.Context, req ctrl.Request
 		patch.SetNamespace(dev.Namespace)
 		patch.SetName(dev.Name)
 		patch.UnstructuredContent()["publicKey"] = desired
+		force := true
 		err = r.Patch(ctx, patch, client.Apply, &client.PatchOptions{
 			FieldManager: "public_key",
+			Force:        &force,
 		})
 		if err != nil {
 			log.Error(err, "Failed to patch Device public key", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
@@ -313,19 +321,19 @@ func (r *DeviceReconciler) reconcileNetwork(ctx context.Context, req ctrl.Reques
 
 	err = r.Get(ctx, dev.NetworkNamespacedName(), net)
 	if err != nil {
-		log.Error(err, "Failed to get Network")
+		log.Error(err, "Failed to get Network", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name)
 		res = &ctrl.Result{Requeue: true}
 		return
 	}
 	return
 }
 
-// 7. Reconcile Secret for WireGuard config file content.
+// 7. Reconcile Secret for Device WireGuard config file content.
 func (r *DeviceReconciler) reconcileDeviceSecretConfig(ctx context.Context, req ctrl.Request, dev starv1.Device, net starv1.Network, srvPub wireguard.PublicKey, pk wireguard.PrivateKey, psk wireguard.PresharedKey) (res *ctrl.Result, err error) {
 	log := log.FromContext(ctx)
 
 	if len(srvPub) == 0 {
-		log.Info("Not found public key in Network. Skipped the reconciliation of Device Secret for WireGuard config file content", "Network.Namespace", net.Namespace, "Network.Name", net.Name)
+		log.Info("Not found public key in Network. Skipped the reconciliation of Device Secret for Device WireGuard config file content", "Device.Namespace", dev.Namespace, "Device.Name", dev.Name, "Network.Namespace", net.Namespace, "Network.Name", net.Name)
 		return
 	}
 

@@ -5,6 +5,7 @@ go 1.16
 require (
 	github.com/asaskevich/govalidator v0.0.0-20190424111038-f61b66f89f4a
 	github.com/go-logr/logr v0.4.0
+	github.com/google/uuid v1.1.2
 	github.com/onsi/ginkgo v1.16.4
 	github.com/onsi/gomega v1.13.0
 	golang.org/x/crypto v0.0.0-20210616213533-5ff15b29337e

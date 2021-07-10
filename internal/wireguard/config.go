@@ -23,7 +23,7 @@ const (
 )
 
 var (
-	osToVPNSubType = map[string]string{
+	OSToVPNSubType = map[string]string{
 		"ios":   "com.wireguard.ios",
 		"macos": "com.wireguard.macos",
 	}
@@ -66,7 +66,7 @@ type DevMobileconfig struct {
 	PayloadOrganization string
 	PayloadDisplayName  string
 	DevConf             DevConf
-	WgQuickConfig       string
+	UserDefinedName     string
 	RemoteAddress       string
 	// One of "ios", "macos"
 	OS                                  string
@@ -126,9 +126,9 @@ func BuildDevConf(c DevConf) (string, error) {
 }
 
 func BuildDevMobileconfig(c DevMobileconfig) (string, error) {
-	vpnSubType, ok := osToVPNSubType[c.OS]
+	vpnSubType, ok := OSToVPNSubType[c.OS]
 	if !ok {
-		return "", fmt.Errorf("%v is not supported OS type", c.OS)
+		return "", fmt.Errorf("%q is not supported OS type", c.OS)
 	}
 
 	dem := "0"
@@ -145,6 +145,7 @@ func BuildDevMobileconfig(c DevMobileconfig) (string, error) {
 		PayloadOrganization:                 c.PayloadOrganization,
 		PayloadDisplayName:                  c.PayloadDisplayName,
 		WgQuickConfig:                       devConf,
+		UserDefinedName:                     c.UserDefinedName,
 		RemoteAddress:                       c.RemoteAddress,
 		VPNSubType:                          vpnSubType,
 		PayloadIdentifierUUID:               c.PayloadIdentifierUUID,

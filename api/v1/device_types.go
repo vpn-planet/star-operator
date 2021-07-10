@@ -64,9 +64,9 @@ type Device struct {
 	// other resources.
 	SecretRef corev1.SecretReference `json:"secretRef,omitempty"`
 	// Secret Reference to store Device peer preshared key to share with Network.
-	SecretPSKRef corev1.SecretReference `json:"secretPSKRef,omitempty"`
+	PSKSecretRef corev1.SecretReference `json:"pskSecretRef,omitempty"`
 	// Secret Reference to store Device configuration content to download for users.
-	SecretConfigRef corev1.SecretReference `json:"secretConfigRef,omitempty"`
+	ConfigSecretRef corev1.SecretReference `json:"configSecretRef,omitempty"`
 
 	// Base64 encoded device WireGuard interface public key.
 	// Automatically set after the reconciliation.

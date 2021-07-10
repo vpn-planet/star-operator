@@ -166,8 +166,8 @@ func ParseExternalEndpoint(s string) (ExternalEndpoint, error) {
 			h := s[:i]
 			p := s[i+1:]
 
-			if !valid.IsDNSName(h) {
-				return ExternalEndpoint{}, fmt.Errorf("invalid DNS name in host part %q", h)
+			if !valid.IsDNSName(h) && !valid.IsIP(h) {
+				return ExternalEndpoint{}, fmt.Errorf("invalid host name (DNS name or IP address) in host part %q", h)
 			}
 
 			port, err := strconv.Atoi(p)

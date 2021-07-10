@@ -26,18 +26,7 @@ spec:
               of an object. Servers should convert recognized schemas to the latest
               internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
             type: string
-          kind:
-            description: 'Kind is a string value representing the REST resource this
-              object represents. Servers may infer this from the endpoint the client
-              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
-            type: string
-          metadata:
-            type: object
-          publicKey:
-            description: Base64 encoded device WireGuard interface public key. Automatically
-              set after the reconciliation.
-            type: string
-          secretConfigRef:
+          configSecretRef:
             description: Secret Reference to store Device configuration content to
               download for users.
             properties:
@@ -50,7 +39,14 @@ spec:
                   must be unique.
                 type: string
             type: object
-          secretPSKRef:
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          pskSecretRef:
             description: Secret Reference to store Device peer preshared key to share
               with Network.
             properties:
@@ -63,6 +59,10 @@ spec:
                   must be unique.
                 type: string
             type: object
+          publicKey:
+            description: Base64 encoded device WireGuard interface public key. Automatically
+              set after the reconciliation.
+            type: string
           secretRef:
             description: Secret Reference to store Device private key that is not
               supposed to be read by other resources.

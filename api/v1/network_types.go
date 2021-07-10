@@ -66,6 +66,15 @@ type NetworkSpec struct {
 
 	DefaultDeviceDNS      string `json:"defaultDeviceDNS,omitempty"`
 	DefaultServerEndpoint string `json:"defaultServerEndpoint,omitempty"`
+
+	// Organization name for mobileconfig PayloadOrganization
+	PayloadOrganization *string `json:"payloadOrganization,omitempty"`
+	// Name for mobileconfig PayloadDisplayName, the name of
+	// the configuration profile, visible when installing the profile
+	PayloadDisplayName *string `json:"payloadDisplayName,omitempty"`
+	// Name in mobileconfig UserDefinedName, the name of the WireGuard tunnel.
+	// This name shall be used to represent the tunnel in the WireGuard app, and in the System UI for VPNs (Settings > VPN on iOS, System Preferences > Network on macOS).
+	UserDefinedName *string `json:"userDefinedName,omitempty"`
 }
 
 // NetworkStatus defines the observed state of Network
