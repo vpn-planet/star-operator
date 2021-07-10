@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
-	"github.com/google/uuid"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -489,43 +488,6 @@ func deviceConf(dev starv1.Device, net starv1.Network, srvPub wireguard.PublicKe
 		AllowedIPs:       allIPRanges,
 		ServerEndpoint:   se,
 	}
-	if err != nil {
-		return "", err
-	}
-
-	org := net.Name
-	if net.Spec.PayloadOrganization != nil {
-		org = *net.Spec.PayloadOrganization
-	}
-
-	disp := net.Name + " - Star - VPN Planet"
-	if net.Spec.PayloadDisplayName != nil {
-		disp = *net.Spec.PayloadDisplayName
-	}
-
-	name := net.Name + " - Star - VPN Planet"
-	if net.Spec.UserDefinedName != nil {
-		name = *net.Spec.UserDefinedName
-	}
-
-	if _, ok := wireguard.OSToVPNSubType[string(dev.Spec.Type)]; ok {
-		wireguard.BuildDevMobileconfig(
-			wireguard.DevMobileconfig{
-				PayloadOrganization:                 org,
-				PayloadDisplayName:                  disp,
-				DevConf:                             devConf,
-				UserDefinedName:                     name,
-				RemoteAddress:                       e,
-				OS:                                  string(dev.Spec.Type),
-				PayloadIdentifierUUID:               uuid.New().String(),
-				PayloadUUID:                         uuid.New().String(),
-				PayloadContentPayloadIdentifierUUID: uuid.New().String(),
-				PayloadContentPayloadUUID:           uuid.New().String(),
-				OnDemandEnabled:                     false,
-			},
-		)
-	}
-
 	return wireguard.BuildDevConf(devConf)
 }
 
